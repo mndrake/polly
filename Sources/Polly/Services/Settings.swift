@@ -22,6 +22,62 @@ enum SettingsKey {
     static let autoSummarize = "autoSummarize"
     static let customInstructions = "customInstructions"
     static let showCaptionPanel = "showCaptionPanel"
+    static let summaryProvider = "summaryProvider"
+    static let claudeCodePath = "claudeCodePath"
+}
+
+/// How Polly talks to Claude.
+enum SummaryProvider: String, CaseIterable, Identifiable {
+    /// The user's Claude Code install, billed to their Claude plan (Pro, Max, Team, Enterprise).
+    case claudeCode
+    /// An Anthropic API key, billed per token.
+    case apiKey
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .claudeCode: return "Claude Code (your Claude plan)"
+        case .apiKey: return "Anthropic API key (pay per use)"
+        }
+    }
+}
+
+/// Finds the `claude` CLI. GUI apps don't inherit the shell's PATH, so check
+/// the usual install locations first, then ask a login shell once.
+enum ClaudeCodeLocator {
+    private static var shellLookup: URL??
+
+    static func find(explicitPath: String?) -> URL? {
+        if let explicitPath, !explicitPath.trimmingCharacters(in: .whitespaces).isEmpty {
+            return ClaudeCodeClient.locate(explicitPath: explicitPath)
+        }
+        if let found = ClaudeCodeClient.locate() { return found }
+        if let cached = shellLookup { return cached }
+        let found = lookUpInLoginShell()
+        shellLookup = .some(found)
+        return found
+    }
+
+    /// Forgets a failed shell lookup (e.g. after the user installs Claude Code).
+    static func reset() { shellLookup = nil }
+
+    private static func lookUpInLoginShell() -> URL? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-lc", "command -v claude"]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return nil }
+        let deadline = Date().addingTimeInterval(3)
+        while process.isRunning && Date() < deadline { usleep(20_000) }
+        if process.isRunning { process.terminate(); return nil }
+        let path = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard path.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: path) else { return nil }
+        return URL(fileURLWithPath: path)
+    }
 }
 
 enum CaptureMode: String, CaseIterable, Identifiable {
@@ -59,6 +115,8 @@ enum AppSettings {
             SettingsKey.autoSummarize: true,
             SettingsKey.customInstructions: "",
             SettingsKey.showCaptionPanel: true,
+            SettingsKey.summaryProvider: SummaryProvider.claudeCode.rawValue,
+            SettingsKey.claudeCodePath: "",
         ])
     }
 
@@ -95,6 +153,23 @@ enum AppSettings {
     static var autoStop: Bool { defaults.bool(forKey: SettingsKey.autoStop) }
     static var autoSummarize: Bool { defaults.bool(forKey: SettingsKey.autoSummarize) }
     static var showCaptionPanel: Bool { defaults.bool(forKey: SettingsKey.showCaptionPanel) }
+
+    static var summaryProvider: SummaryProvider {
+        SummaryProvider(rawValue: defaults.string(forKey: SettingsKey.summaryProvider) ?? "") ?? .claudeCode
+    }
+
+    /// The `claude` executable to use, from Settings or auto-detected.
+    static var claudeCodeExecutable: URL? {
+        ClaudeCodeLocator.find(explicitPath: defaults.string(forKey: SettingsKey.claudeCodePath))
+    }
+
+    /// Whether summaries and questions can run with the current settings.
+    static var canSummarize: Bool {
+        switch summaryProvider {
+        case .apiKey: return KeychainStore.apiKey != nil
+        case .claudeCode: return claudeCodeExecutable != nil
+        }
+    }
     static var customInstructions: String? { defaults.string(forKey: SettingsKey.customInstructions) }
 
     /// Locales offered in Settings (those with on-device recognition support).

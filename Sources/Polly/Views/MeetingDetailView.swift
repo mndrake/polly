@@ -78,7 +78,7 @@ struct MeetingDetailView: View {
 private struct SummaryTab: View {
     @EnvironmentObject private var model: AppModel
     let meeting: Meeting
-    @State private var hasAPIKey = KeychainStore.apiKey != nil
+    @State private var canSummarize = AppSettings.canSummarize
 
     var body: some View {
         ScrollView {
@@ -117,7 +117,7 @@ private struct SummaryTab: View {
             .padding(24)
             .frame(maxWidth: 820, alignment: .leading)
         }
-        .onAppear { hasAPIKey = KeychainStore.apiKey != nil }
+        .onAppear { canSummarize = AppSettings.canSummarize }
     }
 
     @ViewBuilder
@@ -125,7 +125,7 @@ private struct SummaryTab: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("No summary yet")
                 .font(.title3.bold())
-            if hasAPIKey {
+            if canSummarize {
                 Text("Claude will write a title, summary, key points, decisions, action items and open questions from the transcript.")
                     .foregroundStyle(.secondary)
                 Button {
@@ -136,7 +136,9 @@ private struct SummaryTab: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(meeting.isEmpty)
             } else {
-                Text("Add your Anthropic API key in Settings to generate meeting notes with Claude. Only the transcript text is sent — never audio.")
+                Text(AppSettings.summaryProvider == .claudeCode
+                     ? "Polly couldn't find Claude Code. Install it and sign in with your Claude account, or choose an API key in Settings. Only the transcript text is sent — never audio."
+                     : "Add your Anthropic API key in Settings to generate meeting notes with Claude. Only the transcript text is sent — never audio.")
                     .foregroundStyle(.secondary)
                 SettingsLink { Text("Open Settings…") }
             }

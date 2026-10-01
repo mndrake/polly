@@ -12,6 +12,10 @@ meeting notes with Claude. Works with **Zoom**, **Microsoft Teams**,
 - 👀 **Meeting detection** – notices Zoom/Teams/Meet meetings and offers to
   start transcribing (or starts automatically), and stops when the meeting
   window closes.
+- 💬 **Live captions** – a small floating window stays on top of your call
+  (even full-screen) with the latest lines and a green/yellow/grey status per
+  side, so you can see both you and the others are being captured. It's hidden
+  from screen sharing.
 - ✨ **Claude summaries** – title, summary, key points, decisions, action items
   with owners, open questions — streamed live. Then ask follow-up questions
   ("What did I commit to?", "Draft a follow-up email").
@@ -24,7 +28,11 @@ See [`docs/DESIGN.md`](docs/DESIGN.md) for the options considered and the archit
 
 - macOS 14 Sonoma or later (macOS 26 Tahoe recommended for the best transcription)
 - Xcode 16+ (Xcode 26 to build the SpeechAnalyzer engine)
-- An [Anthropic API key](https://console.anthropic.com/settings/keys) for summaries
+- For summaries, either:
+  - **[Claude Code](https://claude.com/claude-code)** signed in with your Claude
+    plan (Pro, Max, Team or Enterprise). Usage counts toward your plan, with no
+    API bill. This is the default.
+  - or an [Anthropic API key](https://console.anthropic.com/settings/keys), billed per token.
 
 ## Download
 
@@ -53,16 +61,19 @@ xcrun notarytool submit build/Polly.zip …   # after zipping with ditto
 
 ## First run
 
-1. Open **Settings → Claude** and paste your Anthropic API key (stored in the
-   macOS Keychain). Optionally set your name so your lines are labelled with it.
+1. Install Claude Code and run `claude` once in Terminal to sign in with your
+   Claude account. Polly finds it automatically (check **Settings → Claude**).
+   Or switch Settings to **Anthropic API key** and paste a key (stored in the
+   Keychain). Optionally set your name so your lines are labelled with it.
 2. Click **Start Recording**. macOS will ask for:
    - **Microphone** – to transcribe you.
    - **Screen & System Audio Recording** – to capture the meeting app's audio
      and read window titles for meeting detection. Polly never records video.
      After granting it, quit and reopen Polly.
    - **Speech Recognition** (macOS 14/15 only).
-3. Join a meeting. Polly shows a live transcript with input level meters for
-   both channels. Click **Stop** — the notes are generated automatically.
+3. Join a meeting. The floating captions window shows what's being heard on
+   both channels as people talk. Click **Stop** — the notes are generated
+   automatically.
 
 > **Consent:** recording or transcribing people may require their consent
 > where you live. Tell participants you are transcribing the call.
@@ -76,7 +87,7 @@ xcrun notarytool submit build/Polly.zip …   # after zipping with ditto
 | Speech-to-text | `SpeechAnalyzer`/`SpeechTranscriber` (macOS 26+), `SFSpeechRecognizer` on-device fallback |
 | Transcript assembly | `TranscriptBuilder`: orders both channels, live partial lines, echo suppression |
 | Meeting detection | Running apps + window titles + "mic in use" → `MeetingDetector` rules |
-| Summaries & Q&A | Claude Messages API over HTTPS with SSE streaming; transcript prompt-cached; `claude-opus-5-5` by default (Sonnet 5.5 / Haiku 4.5 selectable) |
+| Summaries & Q&A | Your Claude Code install in headless mode (`claude -p`, no tools, no project settings, nothing saved), or the Claude Messages API with an API key; `claude-opus-5-5` by default (Sonnet 5.5 / Haiku 4.5 selectable) |
 | Storage | JSON per meeting in `~/Library/Application Support/Polly/Meetings` |
 
 ### Project layout
@@ -118,4 +129,8 @@ the full app on macOS.
   *Remove speaker echo* on, or use headphones.
 - **"On-device speech recognition isn't installed"** (macOS 14/15) – enable
   Dictation for that language in *System Settings → Keyboard*.
-- **401 from Anthropic** – re-enter the API key in Settings.
+- **"Claude Code isn't signed in"** – run `claude` in Terminal and sign in with
+  your Claude account.
+- **"Claude Code isn't installed"** – install it, or set its path in
+  *Settings → Claude* if it lives somewhere unusual.
+- **401 from Anthropic** (API key mode) – re-enter the API key in Settings.

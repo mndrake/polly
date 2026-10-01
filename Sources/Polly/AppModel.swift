@@ -161,7 +161,7 @@ final class AppModel: ObservableObject {
         }
         upsert(meeting, save: false) // already saved by the session
         selection = meeting.id
-        if AppSettings.autoSummarize, KeychainStore.apiKey != nil {
+        if AppSettings.autoSummarize, AppSettings.canSummarize {
             summarize(meeting.id)
         }
     }
@@ -210,9 +210,16 @@ final class AppModel: ObservableObject {
 
     // MARK: - Claude
 
-    private func makeClient() throws -> ClaudeClient {
-        guard let key = KeychainStore.apiKey else { throw ClaudeError.missingAPIKey }
-        return ClaudeClient(apiKey: key, transport: URLSessionLineTransport())
+    private func makeClient() throws -> any ClaudeStreaming {
+        switch AppSettings.summaryProvider {
+        case .apiKey:
+            guard let key = KeychainStore.apiKey else { throw ClaudeError.missingAPIKey }
+            return ClaudeClient(apiKey: key, transport: URLSessionLineTransport())
+        case .claudeCode:
+            ClaudeCodeLocator.reset()
+            guard let executable = AppSettings.claudeCodeExecutable else { throw ClaudeCodeError.notInstalled }
+            return ClaudeCodeClient(executable: executable)
+        }
     }
 
     func isSummarizing(_ id: UUID) -> Bool { streamingSummary[id] != nil }

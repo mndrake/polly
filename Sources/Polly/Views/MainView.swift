@@ -224,9 +224,9 @@ struct EmptyStateView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            if KeychainStore.apiKey == nil {
+            if !AppSettings.canSummarize {
                 SettingsLink {
-                    Text("Add your Anthropic API key to enable summaries")
+                    Text("Set up Claude (Claude Code or an API key) to enable summaries")
                 }
                 .buttonStyle(.link)
             }

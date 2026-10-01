@@ -22,28 +22,61 @@ private struct ClaudeSettings: View {
     @AppStorage(SettingsKey.autoSummarize) private var autoSummarize = true
     @AppStorage(SettingsKey.customInstructions) private var customInstructions = ""
     @AppStorage(SettingsKey.myName) private var myName = ""
+    @AppStorage(SettingsKey.summaryProvider) private var provider = SummaryProvider.claudeCode.rawValue
+    @AppStorage(SettingsKey.claudeCodePath) private var claudeCodePath = ""
     @State private var apiKey = ""
     @State private var savedMessage: String?
+    @State private var claudeCodeLocation: URL?
+
+    private func refreshLocation() {
+        ClaudeCodeLocator.reset()
+        claudeCodeLocation = ClaudeCodeLocator.find(explicitPath: claudeCodePath)
+    }
 
     var body: some View {
         Form {
             Section {
-                SecureField("Anthropic API key", text: $apiKey, prompt: Text("sk-ant-…"))
-                HStack {
-                    Button("Save Key") {
-                        savedMessage = KeychainStore.save(apiKey) ? (apiKey.isEmpty ? "Key removed." : "Saved to your Keychain.") : "Couldn't save to the Keychain."
+                Picker("Generate summaries with", selection: $provider) {
+                    ForEach(SummaryProvider.allCases) { Text($0.displayName).tag($0.rawValue) }
+                }
+                if provider == SummaryProvider.claudeCode.rawValue {
+                    HStack {
+                        if let found = claudeCodeLocation {
+                            Label(found.path, systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        } else {
+                            Label("Claude Code not found", systemImage: "exclamationmark.circle")
+                                .foregroundStyle(.orange)
+                        }
+                        Spacer()
+                        Button("Check Again") { refreshLocation() }
                     }
-                    if let savedMessage {
-                        Text(savedMessage).font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Link("Get an API key", destination: URL(string: "https://console.anthropic.com/settings/keys")!)
+                    TextField("Custom location (optional)", text: $claudeCodePath, prompt: Text("~/.local/bin/claude"))
+                        .onSubmit { refreshLocation() }
+                    Link("Install Claude Code", destination: URL(string: "https://claude.com/claude-code")!)
                         .font(.caption)
+                } else {
+                    SecureField("Anthropic API key", text: $apiKey, prompt: Text("sk-ant-…"))
+                    HStack {
+                        Button("Save Key") {
+                            savedMessage = KeychainStore.save(apiKey) ? (apiKey.isEmpty ? "Key removed." : "Saved to your Keychain.") : "Couldn't save to the Keychain."
+                        }
+                        if let savedMessage {
+                            Text(savedMessage).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Link("Get an API key", destination: URL(string: "https://console.anthropic.com/settings/keys")!)
+                            .font(.caption)
+                    }
                 }
             } header: {
-                Text("API Key")
+                Text("Claude")
             } footer: {
-                Text("Only transcript text is sent to Anthropic, and only when you summarize or ask a question.")
+                Text(provider == SummaryProvider.claudeCode.rawValue
+                     ? "Uses your installed Claude Code, signed in with your Claude account (Pro, Max, Team or Enterprise). Usage counts toward your plan's limits instead of API billing. Run `claude` in Terminal once to sign in. Only transcript text is sent."
+                     : "Billed per token to your Anthropic Console account. Only transcript text is sent, and only when you summarize or ask a question.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -54,7 +87,8 @@ private struct ClaudeSettings: View {
                 Picker("Effort", selection: $effort) {
                     ForEach(ClaudeEffort.allCases) { Text($0.displayName).tag($0.rawValue) }
                 }
-                .disabled(!(ClaudeModel(rawValue: modelID)?.supportsEffort ?? true))
+                .disabled(provider == SummaryProvider.claudeCode.rawValue || !(ClaudeModel(rawValue: modelID)?.supportsEffort ?? true))
+                .help(provider == SummaryProvider.claudeCode.rawValue ? "Claude Code chooses the effort level itself." : "")
                 Toggle("Summarize automatically when a recording stops", isOn: $autoSummarize)
                 TextField("Your name", text: $myName, prompt: Text("Used to label your lines in transcripts"))
                 VStack(alignment: .leading, spacing: 4) {
@@ -69,7 +103,10 @@ private struct ClaudeSettings: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { apiKey = KeychainStore.read() ?? "" }
+        .onAppear {
+            apiKey = KeychainStore.read() ?? ""
+            refreshLocation()
+        }
     }
 }
 
