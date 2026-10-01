@@ -1,11 +1,20 @@
 name: Release
 
-# Push a version tag (e.g. `git tag v0.1.0 && git push origin v0.1.0`) to build
-# Polly.app and publish it as a GitHub Release.
+# Builds Polly.app and publishes it as a GitHub Release, either when a version
+# tag is pushed (`git tag v0.2.0 && git push origin v0.2.0`) or when run
+# manually from the Actions tab with a version (the tag is then created).
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to release, e.g. v0.2.0"
+        required: true
+
+env:
+  TAG: ${{ inputs.version || github.ref_name }}
 
 permissions:
   contents: write
@@ -26,7 +35,7 @@ jobs:
 
       - name: Stamp version from tag
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${TAG#v}"
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" App/Info.plist
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" App/Info.plist
 
@@ -37,14 +46,15 @@ jobs:
           ZIP: "1"
 
       - name: Rename archive
-        run: mv build/Polly.zip "build/Polly-${GITHUB_REF_NAME}-macOS.zip"
+        run: mv build/Polly.zip "build/Polly-${TAG}-macOS.zip"
 
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" "build/Polly-${GITHUB_REF_NAME}-macOS.zip" \
-            --title "Polly ${GITHUB_REF_NAME}" \
+          gh release create "$TAG" "build/Polly-${TAG}-macOS.zip" \
+            --target "$GITHUB_SHA" \
+            --title "Polly ${TAG}" \
             --notes "$(cat <<'EOF'
           Universal (Apple Silicon + Intel) build of Polly for macOS 14 or later. macOS 26 gives the best transcription.
 
