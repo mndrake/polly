@@ -26,6 +26,14 @@ See [`docs/DESIGN.md`](docs/DESIGN.md) for the options considered and the archit
 - Xcode 16+ (Xcode 26 to build the SpeechAnalyzer engine)
 - An [Anthropic API key](https://console.anthropic.com/settings/keys) for summaries
 
+## Download
+
+Grab the latest `Polly-*-macOS.zip` from
+[Releases](https://github.com/mndrake/polly/releases). Builds are ad-hoc
+signed, so the first launch needs right-click → **Open**.
+
+To publish a release, push a version tag: `git tag v0.2.0 && git push origin v0.2.0`.
+
 ## Build & run
 
 ```bash

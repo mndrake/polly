@@ -1,0 +1,56 @@
+name: Release
+
+# Push a version tag (e.g. `git tag v0.1.0 && git push origin v0.1.0`) to build
+# Polly.app and publish it as a GitHub Release.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & publish Polly.app
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+
+      - run: swift --version
+
+      - run: swift test
+
+      - name: Stamp version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" App/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" App/Info.plist
+
+      - name: Build Polly.app (universal)
+        run: scripts/build-app.sh
+        env:
+          UNIVERSAL: "1"
+          ZIP: "1"
+
+      - name: Rename archive
+        run: mv build/Polly.zip "build/Polly-${GITHUB_REF_NAME}-macOS.zip"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "build/Polly-${GITHUB_REF_NAME}-macOS.zip" \
+            --title "Polly ${GITHUB_REF_NAME}" \
+            --notes "$(cat <<'EOF'
+          Universal (Apple Silicon + Intel) build of Polly for macOS 14 or later. macOS 26 gives the best transcription.
+
+          **Install**
+          1. Download `Polly-*-macOS.zip`, unzip it and move `Polly.app` to Applications.
+          2. This build is ad-hoc signed (not notarized), so macOS blocks it the first time: right-click **Polly.app → Open**, or run `xattr -dr com.apple.quarantine /Applications/Polly.app`.
+          3. Add your Anthropic API key in Settings, then allow Microphone and Screen & System Audio Recording when asked (restart Polly after granting screen recording).
+          EOF
+          )"
