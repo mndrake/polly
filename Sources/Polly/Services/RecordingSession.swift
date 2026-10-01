@@ -19,6 +19,8 @@ final class RecordingSession: ObservableObject {
         var engine: EnginePreference
         var captureMicrophone: Bool
         var echoSuppression: Bool
+        /// Keep the remote audio in a temporary file for speaker separation afterwards.
+        var separateSpeakers: Bool
     }
 
     @Published private(set) var state: State = .preparing("Starting…")
@@ -40,6 +42,9 @@ final class RecordingSession: ObservableObject {
     private var systemAudio: SystemAudioCapture?
     private var timers: [Task<Void, Never>] = []
     private var lastSavedSegmentCount = 0
+    private var othersRecorder: AudioFileRecorder?
+    /// After `stop()`: the remote channel's audio, for speaker separation. The caller deletes it.
+    private(set) var othersAudioURL: URL?
 
     init(meeting: Meeting, configuration: Configuration, detectedMeeting: DetectedMeeting?, store: MeetingStore) {
         self.meeting = meeting
@@ -91,6 +96,16 @@ final class RecordingSession: ObservableObject {
             let engine = try await TranscriptionEngineFactory.makePreparedEngine(preference: configuration.engine, locale: configuration.locale)
             engineName = engine.name
             let pipeline = ChannelPipeline(speaker: .others, engine: engine, startDate: startDate)
+            if configuration.separateSpeakers {
+                let url = AudioFileRecorder.directory.appendingPathComponent("\(meeting.id.uuidString).caf")
+                do {
+                    let recorder = try AudioFileRecorder(url: url, format: engine.audioFormat)
+                    pipeline.tap = { [recorder] buffer in recorder.write(buffer) }
+                    othersRecorder = recorder
+                } catch {
+                    warnings.append("Speaker separation is off for this meeting: \(error.localizedDescription)")
+                }
+            }
             try await pipeline.start(onUpdate: makeUpdateHandler())
 
             let capture = SystemAudioCapture()
@@ -229,6 +244,12 @@ final class RecordingSession: ObservableObject {
         try? await Task.sleep(nanoseconds: 200_000_000)
         pipelines.removeAll()
         levels = [:]
+        othersAudioURL = othersRecorder?.finish()
+        othersRecorder = nil
+    }
+
+    func setAttendees(_ names: [String]) {
+        meeting.attendees = names
     }
 
     func rename(_ title: String) {

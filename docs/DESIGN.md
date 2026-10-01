@@ -148,7 +148,8 @@ user's responsibility and the UI reminds them.
 
 ### Privacy
 
-* Audio is processed on device and never written to disk.
+* Audio is processed on device. With speaker separation on, the meeting-app
+  channel is kept in a temporary file only until separation finishes.
 * Transcripts are stored locally in
   `~/Library/Application Support/Polly/Meetings/*.json`.
 * Only transcript text is sent to Anthropic, only on summary/question requests.
@@ -170,12 +171,35 @@ user's responsibility and the UI reminds them.
 6. Packaging: embedded Info.plist, entitlements, `build-app.sh`, README.
 7. CI: build + test `PollyCore` on Linux, build the app on macOS.
 
+### Speaker identification
+
+Polly's mic/meeting-app split already attributes the user's own lines
+correctly. For the remote side:
+
+* **Voice separation** – FluidAudio's offline diarization pipeline runs on
+  the meeting-app channel after the call. During recording, exactly the
+  samples fed to the speech engine (including silence padding) are written
+  to a temporary file, so diarization timestamps share the transcript's
+  timeline. Each remote transcript segment gets the voice with the largest
+  time overlap (`SpeakerAssignment`), renumbered S1, S2… by first appearance.
+  The file is deleted when processing finishes (and leftovers at launch).
+  macOS 15+ only: macOS 14 has a Core ML/BNNS bug that crashes this pipeline.
+* **Names** – the calendar event in progress supplies invitee names (EventKit).
+  The summary prompt asks Claude to return a fenced `speakers` JSON block
+  mapping unconfirmed "Speaker N" labels to names; it's parsed, removed from
+  the notes and stored as suggestions. User-confirmed names always win and are
+  the only names fed back into later prompts.
+* **Rejected** – reading the active-speaker highlight from Zoom/Teams through
+  Accessibility APIs (fragile, per-app, extra permission), and platform
+  transcript APIs (admin-licensed, three integrations).
+
 ### Future work
 
 * Core Audio process taps instead of ScreenCaptureKit (drops the
   Screen Recording requirement on macOS 14.4+).
-* Speaker diarization of the "Others" channel (e.g. pyannote/FluidAudio) and
-  naming speakers from the platform's participant list.
+* Remember voices across meetings (opt-in voice fingerprints) so regular
+  colleagues are recognised automatically.
+* Live (streaming) speaker separation for the captions window.
 * WhisperKit engine; per-meeting language auto-detect.
 * Calendar integration (EventKit) for titles/attendees.
 * Export to Notion / Google Docs / Slack.

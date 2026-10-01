@@ -24,16 +24,20 @@
 	<string>public.app-category.productivity</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Polly looks up who was invited to the meeting you're recording so it can put names to the voices in your transcript. Calendar data stays on this Mac except attendee names included with the transcript when you summarize.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Polly looks up who was invited to the meeting you're recording so it can put names to the voices in your transcript. Calendar data stays on this Mac except attendee names included with the transcript when you summarize.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>Polly</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Polly transcribes what you say during meetings. Audio is processed on this Mac and never stored.</string>
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Polly uses on-device speech recognition to transcribe your meetings.</string>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>Polly captures the audio of your meeting app (Zoom, Teams, Google Meet) to transcribe other participants, and reads window titles to detect when a meeting starts. Nothing is recorded to disk.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Polly uses on-device speech recognition to transcribe your meetings.</string>
 	<key>NSUserNotificationsUsageDescription</key>
 	<string>Polly can let you know when it detects a meeting so you can start transcribing.</string>
 </dict>

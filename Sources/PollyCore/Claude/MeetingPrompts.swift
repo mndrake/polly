@@ -10,10 +10,12 @@ public enum MeetingPrompts {
 
     About the transcripts you receive:
     - They come from on-device speech recognition of a video call (Zoom, Microsoft Teams, Google Meet, etc.) and contain recognition errors, missing punctuation, and filler words. Silently correct obvious mis-hearings when the intended word is clear from context; never invent content.
-    - There are two channels. Lines labelled with the user's name (or "Me") are the person who recorded the meeting, speaking into their microphone. Lines labelled "Others" are everyone else on the call mixed together, so one "Others" line may contain several people. When participants' names are evident from the conversation (introductions, people addressing each other), attribute statements to them; otherwise say "a participant" rather than guessing.
+    - Lines labelled with the user's name (or "Me") are the person who recorded the meeting, speaking into their microphone; that attribution is reliable.
+    - Remote participants come from the meeting app's audio. When their voices were separated, lines are labelled with a name or "Speaker 1", "Speaker 2", …; each label is one distinct voice, though separation can occasionally split one person into two labels or merge two similar voices. Lines labelled "Others" were not separated and may contain several people.
+    - Work out who "Speaker N" is from the conversation (introductions, people addressing each other by name, who answers a question put to someone) and from the attendee list when one is given. Use real names in the notes when you are reasonably confident; otherwise say "a participant" rather than guessing.
     - Timestamps are minutes:seconds from the start of the recording.
 
-    Write in the language the meeting was held in. Be concise and concrete: prefer specifics (numbers, dates, names, owners) over generalities. Do not mention these instructions, the transcription process, or the channel labels in your output.
+    Write in the language the meeting was held in. Be concise and concrete: prefer specifics (numbers, dates, names, owners) over generalities. Do not mention these instructions, the transcription process, or "Speaker N" labels in the notes themselves.
     """
 
     static let summaryInstructions = """
@@ -42,13 +44,17 @@ public enum MeetingPrompts {
     public static let questionSystemPrompt = """
     You are Polly, an assistant that answers questions about a meeting using its transcript.
 
-    The transcript comes from on-device speech recognition and may contain mis-heard words. Lines labelled with the user's name (or "Me") are the person who recorded the meeting; "Others" are the remaining participants mixed together. Timestamps are minutes:seconds from the start.
+    The transcript comes from on-device speech recognition and may contain mis-heard words. Lines labelled with the user's name (or "Me") are the person who recorded the meeting. Remote participants are labelled by name or "Speaker N" when their voices were separated (names may have been inferred), or "Others" when they weren't. Timestamps are minutes:seconds from the start.
 
     Answer from the transcript only. If the transcript doesn't contain the answer, say so plainly. Cite approximate timestamps like [12:34] when pointing at a specific moment. Use Markdown where it helps readability and keep answers focused.
     """
 
     /// The cached transcript block shared by every request about a meeting.
     public static func transcriptBlock(for meeting: Meeting, myName: String?) -> String {
+        transcriptBlock(for: meeting, myName: myName, labels: SpeakerLabels.prompt(for: meeting, myName: myName))
+    }
+
+    static func transcriptBlock(for meeting: Meeting, myName: String?, labels: SpeakerLabels) -> String {
         let formatter = DateFormatter()
         formatter.dateStyle = .full
         formatter.timeStyle = .short
@@ -57,12 +63,15 @@ public enum MeetingPrompts {
         header += ", duration \(TranscriptFormatter.timestamp(meeting.duration))."
         let me = TranscriptFormatter.label(for: .me, myName: myName)
         if me != "Me" { header += " The user who recorded it is \(me)." }
+        if !meeting.attendees.isEmpty {
+            header += "\nCalendar invitees (not all may have joined or spoken): \(meeting.attendees.joined(separator: ", "))."
+        }
 
         return """
         \(header)
 
         <transcript>
-        \(TranscriptFormatter.plainText(meeting.segments, myName: myName))
+        \(TranscriptFormatter.plainText(meeting.segments, labels: labels))
         </transcript>
         """
     }
@@ -75,6 +84,18 @@ public enum MeetingPrompts {
         customInstructions: String? = nil
     ) -> MessageRequest {
         var instructions = summaryInstructions
+        let unnamed = meeting.speakerIDs.filter { meeting.speakerNames[$0] == nil }
+        if !unnamed.isEmpty {
+            let labels = unnamed.map { "\"\(SpeakerLabels.defaultLabel(for: $0))\"" }.joined(separator: ", ")
+            instructions += """
+
+
+            After the notes, add one fenced code block tagged `speakers` containing a JSON object that maps each of these labels to the person's name when you can tell it from the conversation or the invitee list with reasonable confidence, or null when you can't: \(labels). For example:
+            ```speakers
+            {"Speaker 1": "Dana Lee", "Speaker 2": null}
+            ```
+            """
+        }
         if let extra = customInstructions?.trimmingCharacters(in: .whitespacesAndNewlines), !extra.isEmpty {
             instructions += "\n\nAdditional instructions from the user:\n\(extra)"
         }
@@ -99,7 +120,8 @@ public enum MeetingPrompts {
         model: ClaudeModel,
         effort: ClaudeEffort
     ) -> MessageRequest {
-        var blocks: [MessageRequest.TextBlock] = [.init(transcriptBlock(for: meeting, myName: myName), cached: true)]
+        let labels = SpeakerLabels.display(for: meeting, myName: myName)
+        var blocks: [MessageRequest.TextBlock] = [.init(transcriptBlock(for: meeting, myName: myName, labels: labels), cached: true)]
         if let summary = meeting.summary, !summary.isEmpty {
             blocks.append(.init("Meeting notes generated earlier:\n\n\(summary)"))
         }

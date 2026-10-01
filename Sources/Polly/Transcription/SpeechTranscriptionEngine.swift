@@ -90,6 +90,10 @@ final class ChannelPipeline {
     private let lock = NSLock()
     private var stopped = false
 
+    /// Receives exactly the audio fed to the engine (including silence
+    /// padding), so a recording of it shares the transcript's timeline.
+    var tap: ((AVAudioPCMBuffer) -> Void)?
+
     /// Latest input level (0…1), read from the main thread for meters.
     private(set) var level: Float = 0
     private(set) var peakLevelSinceStart: Float = 0
@@ -126,8 +130,10 @@ final class ChannelPipeline {
             let padding = aligner.silenceFrames(beforeBufferAt: bufferStart)
             if padding > 0, let silence = AVAudioPCMBuffer.silence(format: engine.audioFormat, frames: AVAudioFrameCount(padding)) {
                 engine.append(silence)
+                tap?(silence)
             }
             engine.append(converted)
+            tap?(converted)
             aligner.didFeed(frames: Int(converted.frameLength))
         } catch {
             NSLog("Polly: dropping \(speaker) audio buffer: \(error.localizedDescription)")

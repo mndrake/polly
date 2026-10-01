@@ -117,6 +117,8 @@ private struct TranscriptionSettings: View {
     @AppStorage(SettingsKey.captureMicrophone) private var captureMicrophone = true
     @AppStorage(SettingsKey.echoSuppression) private var echoSuppression = true
     @AppStorage(SettingsKey.showCaptionPanel) private var showCaptionPanel = true
+    @AppStorage(SettingsKey.separateSpeakers) private var separateSpeakers = true
+    @AppStorage(SettingsKey.useCalendarAttendees) private var useCalendarAttendees = true
     @EnvironmentObject private var model: AppModel
 
     private let locales = AppSettings.transcriptionLocales
@@ -147,6 +149,19 @@ private struct TranscriptionSettings: View {
                 Toggle("Transcribe my microphone", isOn: $captureMicrophone)
                 Toggle("Remove speaker echo from my channel", isOn: $echoSuppression)
                 Toggle("Show floating live captions while recording", isOn: $showCaptionPanel)
+            }
+
+            Section {
+                Toggle("Tell other participants' voices apart", isOn: $separateSpeakers)
+                    .disabled(!SpeakerDiarization.isSupported)
+                Toggle("Use calendar invitees to name speakers", isOn: $useCalendarAttendees)
+            } header: {
+                Text("Speakers")
+            } footer: {
+                Text(SpeakerDiarization.isSupported
+                     ? "After a meeting, Polly separates the other participants' voices on this Mac (Speaker 1, Speaker 2, …) and Claude suggests who is who from the conversation and the calendar invite. Click a speaker to set their name. While recording, the meeting audio is kept in a temporary file until this finishes, then deleted. The first run downloads the voice models."
+                     : "Telling voices apart needs macOS 15 or later. Claude still names people when it can tell from the conversation.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Text("If you're not wearing headphones, your microphone also hears other participants. Echo removal drops those duplicate lines. Headphones give the cleanest transcript.")
                     .font(.caption).foregroundStyle(.secondary)
             }

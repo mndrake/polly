@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.1
 import PackageDescription
 
 // PollyCore is platform-independent (Foundation only) so it can be built and
@@ -8,6 +8,8 @@ import PackageDescription
 var products: [Product] = [
     .library(name: "PollyCore", targets: ["PollyCore"]),
 ]
+
+var dependencies: [Package.Dependency] = []
 
 var targets: [Target] = [
     .target(
@@ -22,11 +24,17 @@ var targets: [Target] = [
 ]
 
 #if os(macOS)
+// On-device speaker diarization. The NemoTextProcessing trait (text
+// normalisation for FluidAudio's speech-to-text) isn't needed, so it's off.
+dependencies.append(.package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.5", traits: []))
 products.append(.executable(name: "Polly", targets: ["Polly"]))
 targets.append(
     .executableTarget(
         name: "Polly",
-        dependencies: ["PollyCore"],
+        dependencies: [
+            "PollyCore",
+            .product(name: "FluidAudio", package: "FluidAudio"),
+        ],
         path: "Sources/Polly",
         linkerSettings: [
             // Embed Info.plist in the binary so permission prompts (microphone,
@@ -46,6 +54,7 @@ let package = Package(
     name: "Polly",
     platforms: [.macOS(.v14)],
     products: products,
+    dependencies: dependencies,
     targets: targets,
     swiftLanguageModes: [.v5]
 )

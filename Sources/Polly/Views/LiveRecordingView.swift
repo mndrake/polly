@@ -25,7 +25,7 @@ struct LiveRecordingView: View {
                 .padding(.bottom, 12)
             }
             Divider()
-            TranscriptView(segments: session.segments, liveText: session.liveText, isLive: true, myName: myName)
+            TranscriptView(segments: session.segments, liveText: session.liveText, isLive: true, labels: SpeakerLabels(myName: myName))
         }
         .onAppear { title = session.meeting.title }
     }

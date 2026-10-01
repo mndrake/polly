@@ -16,6 +16,10 @@ meeting notes with Claude. Works with **Zoom**, **Microsoft Teams**,
   (even full-screen) with the latest lines and a green/yellow/grey status per
   side, so you can see both you and the others are being captured. It's hidden
   from screen sharing.
+- 🗣️ **Who said what** – after the meeting, other participants' voices are
+  separated on your Mac (Speaker 1, Speaker 2, …). Claude suggests who each one
+  is from the conversation and the calendar invite, and you can confirm or
+  rename them with one click. Notes and action items then name real people.
 - ✨ **Claude summaries** – title, summary, key points, decisions, action items
   with owners, open questions — streamed live. Then ask follow-up questions
   ("What did I commit to?", "Draft a follow-up email").
@@ -73,7 +77,9 @@ xcrun notarytool submit build/Polly.zip …   # after zipping with ditto
    - **Speech Recognition** (macOS 14/15 only).
 3. Join a meeting. The floating captions window shows what's being heard on
    both channels as people talk. Click **Stop** — the notes are generated
-   automatically.
+   automatically. Once the meeting ends, Polly separates the other voices (a
+   progress bar shows while it works), then writes the notes. Click a speaker
+   chip above the transcript to confirm or change who it is.
 
 > **Consent:** recording or transcribing people may require their consent
 > where you live. Tell participants you are transcribing the call.
@@ -85,6 +91,8 @@ xcrun notarytool submit build/Polly.zip …   # after zipping with ditto
 | Other participants' audio | ScreenCaptureKit audio capture filtered to the meeting app (Zoom, Teams, or the browser running Meet), with "all system audio" fallback |
 | Your audio | AVAudioEngine microphone tap |
 | Speech-to-text | `SpeechAnalyzer`/`SpeechTranscriber` (macOS 26+), `SFSpeechRecognizer` on-device fallback |
+| Speaker separation | FluidAudio offline diarization (pyannote segmentation + WeSpeaker + VBx, Core ML, on device, macOS 15+) on the meeting-app channel after the call; voices are matched to transcript lines by time overlap |
+| Speaker names | Calendar invitees via EventKit + Claude's suggestions (a `speakers` JSON block it returns with the notes) + your edits |
 | Transcript assembly | `TranscriptBuilder`: orders both channels, live partial lines, echo suppression |
 | Meeting detection | Running apps + window titles + "mic in use" → `MeetingDetector` rules |
 | Summaries & Q&A | Your Claude Code install in headless mode (`claude -p`, no tools, no project settings, nothing saved), or the Claude Messages API with an API key; `claude-opus-5-5` by default (Sonnet 5.5 / Haiku 4.5 selectable) |

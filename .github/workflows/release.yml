@@ -61,6 +61,7 @@ jobs:
           **Install**
           1. Download `Polly-*-macOS.zip`, unzip it and move `Polly.app` to Applications.
           2. This build is ad-hoc signed (not notarized), so macOS blocks it the first time: right-click **Polly.app → Open**, or run `xattr -dr com.apple.quarantine /Applications/Polly.app`.
-          3. Add your Anthropic API key in Settings, then allow Microphone and Screen & System Audio Recording when asked (restart Polly after granting screen recording).
+          3. For summaries, install Claude Code and run `claude` once in Terminal to sign in with your Claude plan (or add an Anthropic API key in Settings). Allow Microphone, Screen & System Audio Recording and Calendar when asked (restart Polly after granting screen recording).
+          4. Telling speakers apart needs macOS 15+; the first meeting downloads the on-device voice models.
           EOF
           )"

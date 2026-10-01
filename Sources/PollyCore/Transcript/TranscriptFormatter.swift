@@ -18,12 +18,13 @@ public enum TranscriptFormatter {
         }
     }
 
-    /// Consecutive segments from the same speaker separated by less than
-    /// `maxGap` seconds are merged into one turn for readability.
+    /// Consecutive segments from the same speaker (and the same separated
+    /// voice) less than `maxGap` seconds apart are merged into one turn.
     public static func turns(_ segments: [TranscriptSegment], maxGap: TimeInterval = 2.5) -> [TranscriptSegment] {
         var result: [TranscriptSegment] = []
         for segment in segments.sorted(by: { $0.start < $1.start }) {
-            if var last = result.last, last.speaker == segment.speaker, segment.start - last.end <= maxGap {
+            if var last = result.last, last.speaker == segment.speaker, last.speakerID == segment.speakerID,
+               segment.start - last.end <= maxGap {
                 last.text += " " + segment.text
                 last.end = max(last.end, segment.end)
                 result[result.count - 1] = last
@@ -36,8 +37,12 @@ public enum TranscriptFormatter {
 
     /// Plain-text transcript, one turn per line: "[00:12] Me: Hello there."
     public static func plainText(_ segments: [TranscriptSegment], myName: String? = nil) -> String {
+        plainText(segments, labels: SpeakerLabels(myName: myName))
+    }
+
+    public static func plainText(_ segments: [TranscriptSegment], labels: SpeakerLabels) -> String {
         turns(segments)
-            .map { "[\(timestamp($0.start))] \(label(for: $0.speaker, myName: myName)): \($0.text)" }
+            .map { "[\(timestamp($0.start))] \(labels.label(for: $0)): \($0.text)" }
             .joined(separator: "\n")
     }
 }

@@ -24,7 +24,8 @@ struct MeetingDetailView: View {
                 Divider()
                 switch tab {
                 case .summary: SummaryTab(meeting: meeting)
-                case .transcript: TranscriptView(segments: meeting.segments, myName: myName)
+                case .transcript:
+                    TranscriptView(segments: meeting.segments, labels: SpeakerLabels.display(for: meeting, myName: myName))
                 case .ask: AskTab(meeting: meeting)
                 }
             }
@@ -71,6 +72,137 @@ struct MeetingDetailView: View {
             }
             .font(.callout)
             .foregroundStyle(.secondary)
+
+            if let progress = model.speakerProgress[meetingID] {
+                HStack(spacing: 8) {
+                    ProgressView(value: progress).frame(width: 120)
+                    Text("Identifying speakers on this Mac…").font(.callout).foregroundStyle(.secondary)
+                }
+                .padding(.top, 4)
+            } else if !meeting.speakerIDs.isEmpty {
+                SpeakersBar(meeting: meeting)
+                    .padding(.top, 4)
+            }
+            if let error = model.speakerErrors[meetingID] {
+                ErrorBanner(message: error, retry: nil)
+            }
+        }
+    }
+}
+
+/// One chip per separated voice; click to name it.
+private struct SpeakersBar: View {
+    @EnvironmentObject private var model: AppModel
+    let meeting: Meeting
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                Image(systemName: "person.2.wave.2").foregroundStyle(.secondary)
+                ForEach(meeting.speakerIDs, id: \.self) { id in
+                    SpeakerChip(meeting: meeting, speakerID: id)
+                }
+                if meeting.summary != nil, namesChangedSinceSummary {
+                    Button("Update notes with these names") { model.summarize(meeting.id) }
+                        .controlSize(.small)
+                        .disabled(model.isSummarizing(meeting.id))
+                }
+            }
+        }
+    }
+
+    /// The user named someone after the notes were written.
+    private var namesChangedSinceSummary: Bool {
+        guard let summary = meeting.summary else { return false }
+        return meeting.speakerNames.values.contains { !summary.contains($0) }
+    }
+}
+
+private struct SpeakerChip: View {
+    @EnvironmentObject private var model: AppModel
+    let meeting: Meeting
+    let speakerID: String
+    @State private var editing = false
+    @State private var draft = ""
+
+    private var confirmed: String? { meeting.speakerNames[speakerID] }
+    private var suggested: String? { meeting.suggestedSpeakerNames[speakerID] }
+
+    var body: some View {
+        Button {
+            draft = confirmed ?? suggested ?? ""
+            editing = true
+        } label: {
+            HStack(spacing: 4) {
+                Circle().fill(SpeakerColor.color(for: .others, speakerID: speakerID)).frame(width: 8, height: 8)
+                Text(meeting.displayName(forSpeakerID: speakerID))
+                if confirmed == nil, suggested != nil {
+                    Text("?").foregroundStyle(.secondary).help("Suggested by Claude — click to confirm or change")
+                }
+            }
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .popover(isPresented: $editing, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Who is \(SpeakerLabels.defaultLabel(for: speakerID))?").font(.headline)
+                if let quote = firstLine {
+                    Text("“\(quote)”").font(.callout).foregroundStyle(.secondary).lineLimit(3)
+                }
+                TextField("Name", text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(save)
+                if !choices.isEmpty {
+                    Text("From the calendar invite").font(.caption).foregroundStyle(.secondary)
+                    FlowButtons(items: choices) { name in
+                        draft = name
+                        save()
+                    }
+                }
+                HStack {
+                    if confirmed != nil || suggested != nil {
+                        Button("Clear") {
+                            draft = ""
+                            save()
+                        }
+                    }
+                    Spacer()
+                    Button("Save", action: save).keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(14)
+            .frame(width: 300)
+        }
+    }
+
+    /// Something this voice said, to help the user recognise it.
+    private var firstLine: String? {
+        meeting.segments.first { $0.speakerID == speakerID && $0.text.count > 20 }?.text
+            ?? meeting.segments.first { $0.speakerID == speakerID }?.text
+    }
+
+    /// Attendees not already assigned to another voice.
+    private var choices: [String] {
+        let taken = Set(meeting.speakerNames.filter { $0.key != speakerID }.values)
+        return meeting.attendees.filter { !taken.contains($0) }
+    }
+
+    private func save() {
+        model.renameSpeaker(speakerID, in: meeting.id, to: draft)
+        editing = false
+    }
+}
+
+private struct FlowButtons: View {
+    let items: [String]
+    let action: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(items, id: \.self) { item in
+                Button(item) { action(item) }
+                    .buttonStyle(.link)
+            }
         }
     }
 }
@@ -90,13 +222,15 @@ private struct SummaryTab: View {
                 if let streaming = model.streamingSummary[meeting.id] {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
-                        Text(streaming.isEmpty ? "Claude is reading the transcript…" : "Writing notes…")
+                        Text(model.isIdentifyingSpeakers(meeting.id) ? "Identifying speakers…"
+                             : streaming.isEmpty ? "Claude is reading the transcript…" : "Writing notes…")
                             .foregroundStyle(.secondary)
                         Spacer()
                         Button("Cancel") { model.cancelClaude(meeting.id) }
                             .controlSize(.small)
                     }
-                    if !streaming.isEmpty { MarkdownView(markdown: streaming) }
+                    let visible = SpeakerNameParser.stripForDisplay(streaming)
+                    if !visible.isEmpty { MarkdownView(markdown: visible) }
                 } else if let summary = meeting.summary {
                     MarkdownView(markdown: summary)
                     HStack {
@@ -134,7 +268,7 @@ private struct SummaryTab: View {
                     Label("Summarize with Claude", systemImage: "sparkles")
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(meeting.isEmpty)
+                .disabled(meeting.isEmpty || model.isIdentifyingSpeakers(meeting.id))
             } else {
                 Text(AppSettings.summaryProvider == .claudeCode
                      ? "Polly couldn't find Claude Code. Install it and sign in with your Claude account, or choose an API key in Settings. Only the transcript text is sent — never audio."

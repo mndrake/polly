@@ -19,6 +19,9 @@ final class AppModel: ObservableObject {
     /// The question being answered and its streaming answer, keyed by meeting.
     @Published private(set) var pendingQuestion: [UUID: QAExchange] = [:]
     @Published private(set) var questionErrors: [UUID: String] = [:]
+    /// Progress (0…1) of separating voices after a meeting, keyed by meeting.
+    @Published private(set) var speakerProgress: [UUID: Double] = [:]
+    @Published private(set) var speakerErrors: [UUID: String] = [:]
 
     let monitor = MeetingMonitor()
     private let captionPanel = LiveCaptionPanelController()
@@ -36,6 +39,8 @@ final class AppModel: ObservableObject {
         }
         meetings = store.loadAll()
         selection = meetings.first?.id
+        // Temporary audio from a recording interrupted by a crash or quit.
+        AudioFileRecorder.removeLeftovers()
 
         notifier.setUp()
         notifier.onStartRequested = { [weak self] bundleID in
@@ -123,7 +128,8 @@ final class AppModel: ObservableObject {
                 locale: AppSettings.locale,
                 engine: AppSettings.engine,
                 captureMicrophone: AppSettings.captureMicrophone,
-                echoSuppression: AppSettings.echoSuppression
+                echoSuppression: AppSettings.echoSuppression,
+                separateSpeakers: AppSettings.separateSpeakers
             ),
             detectedMeeting: detected,
             store: store
@@ -137,7 +143,14 @@ final class AppModel: ObservableObject {
         }
 
         await session.start()
+        if case .recording = session.state, AppSettings.useCalendarAttendees {
+            Task { [weak session] in
+                let names = await CalendarAttendees.names(at: Date())
+                if !names.isEmpty { session?.setAttendees(names) }
+            }
+        }
         if case let .failed(message) = session.state {
+            if let url = session.othersAudioURL { AudioFileRecorder.delete(url) }
             captionPanel.close()
             recording = nil
             monitor.isRecording = false
@@ -153,7 +166,9 @@ final class AppModel: ObservableObject {
         monitor.isRecording = false
         recording = nil
 
+        let audioURL = session.othersAudioURL
         if meeting.isEmpty {
+            if let audioURL { AudioFileRecorder.delete(audioURL) }
             try? store.delete(id: meeting.id)
             selection = meetings.first?.id
             alert = "Nothing was transcribed, so the recording was discarded."
@@ -161,9 +176,56 @@ final class AppModel: ObservableObject {
         }
         upsert(meeting, save: false) // already saved by the session
         selection = meeting.id
-        if AppSettings.autoSummarize, AppSettings.canSummarize {
-            summarize(meeting.id)
+        let summarizeAfter = AppSettings.autoSummarize && AppSettings.canSummarize
+
+        if let audioURL, meeting.segments.contains(where: { $0.speaker == .others }) {
+            identifySpeakers(meeting.id, audioURL: audioURL, thenSummarize: summarizeAfter)
+        } else {
+            if let audioURL { AudioFileRecorder.delete(audioURL) }
+            if summarizeAfter { summarize(meeting.id) }
         }
+    }
+
+    // MARK: - Speakers
+
+    /// Separates the remote voices in the meeting's audio, labels the
+    /// transcript with them, deletes the audio, then optionally summarizes.
+    private func identifySpeakers(_ id: UUID, audioURL: URL, thenSummarize: Bool) {
+        speakerErrors[id] = nil
+        speakerProgress[id] = 0
+        Task {
+            do {
+                let turns = try await SpeakerDiarization.diarize(fileURL: audioURL) { [weak self] fraction in
+                    Task { @MainActor in
+                        if self?.speakerProgress[id] != nil { self?.speakerProgress[id] = fraction }
+                    }
+                }
+                if var latest = meeting(id: id) {
+                    latest.segments = SpeakerAssignment.assign(turns, to: latest.segments)
+                    upsert(latest)
+                }
+            } catch {
+                speakerErrors[id] = "Couldn't separate speakers: \(error.localizedDescription)"
+            }
+            AudioFileRecorder.delete(audioURL)
+            speakerProgress[id] = nil
+            if thenSummarize { summarize(id) }
+        }
+    }
+
+    func isIdentifyingSpeakers(_ id: UUID) -> Bool { speakerProgress[id] != nil }
+
+    /// Names a separated voice. An empty name reverts to "Speaker N".
+    func renameSpeaker(_ speakerID: String, in id: UUID, to name: String) {
+        guard var meeting = meeting(id: id) else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            meeting.speakerNames[speakerID] = nil
+            meeting.suggestedSpeakerNames[speakerID] = nil
+        } else {
+            meeting.speakerNames[speakerID] = trimmed
+        }
+        upsert(meeting)
     }
 
     var isCaptionPanelVisible: Bool { captionPanel.isVisible }
@@ -225,7 +287,8 @@ final class AppModel: ObservableObject {
     func isSummarizing(_ id: UUID) -> Bool { streamingSummary[id] != nil }
 
     func summarize(_ id: UUID) {
-        guard let meeting = meeting(id: id), !isSummarizing(id), !(recording?.meeting.id == id && isRecording) else { return }
+        guard let meeting = meeting(id: id), !isSummarizing(id), !isIdentifyingSpeakers(id),
+              !(recording?.meeting.id == id && isRecording) else { return }
         summaryErrors[id] = nil
         streamingSummary[id] = ""
 
@@ -258,7 +321,11 @@ final class AppModel: ObservableObject {
                 }
                 // A cancelled stream ends quietly; never save a partial summary.
                 guard completed, !Task.isCancelled, var latest = self.meeting(id: id) else { return }
-                latest.summary = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                let parsed = SpeakerNameParser.extract(from: text)
+                latest.summary = parsed.summary
+                for (speakerID, name) in parsed.names where latest.speakerNames[speakerID] == nil {
+                    latest.suggestedSpeakerNames[speakerID] = name
+                }
                 latest.summaryModel = model
                 latest.summarizedAt = Date()
                 if latest.hasDefaultTitle, let title = MeetingPrompts.extractTitle(fromSummary: text) {

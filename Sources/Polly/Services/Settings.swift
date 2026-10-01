@@ -24,6 +24,8 @@ enum SettingsKey {
     static let showCaptionPanel = "showCaptionPanel"
     static let summaryProvider = "summaryProvider"
     static let claudeCodePath = "claudeCodePath"
+    static let separateSpeakers = "separateSpeakers"
+    static let useCalendarAttendees = "useCalendarAttendees"
 }
 
 /// How Polly talks to Claude.
@@ -117,6 +119,8 @@ enum AppSettings {
             SettingsKey.showCaptionPanel: true,
             SettingsKey.summaryProvider: SummaryProvider.claudeCode.rawValue,
             SettingsKey.claudeCodePath: "",
+            SettingsKey.separateSpeakers: true,
+            SettingsKey.useCalendarAttendees: true,
         ])
     }
 
@@ -153,6 +157,12 @@ enum AppSettings {
     static var autoStop: Bool { defaults.bool(forKey: SettingsKey.autoStop) }
     static var autoSummarize: Bool { defaults.bool(forKey: SettingsKey.autoSummarize) }
     static var showCaptionPanel: Bool { defaults.bool(forKey: SettingsKey.showCaptionPanel) }
+
+    /// Separate remote voices after each meeting (macOS 15+).
+    static var separateSpeakers: Bool {
+        defaults.bool(forKey: SettingsKey.separateSpeakers) && SpeakerDiarization.isSupported
+    }
+    static var useCalendarAttendees: Bool { defaults.bool(forKey: SettingsKey.useCalendarAttendees) }
 
     static var summaryProvider: SummaryProvider {
         SummaryProvider(rawValue: defaults.string(forKey: SettingsKey.summaryProvider) ?? "") ?? .claudeCode

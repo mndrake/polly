@@ -37,8 +37,9 @@ public enum MarkdownExporter {
 
         if includeTranscript {
             lines += ["", "## Transcript", ""]
+            let labels = SpeakerLabels.display(for: meeting, myName: myName)
             for turn in TranscriptFormatter.turns(meeting.segments) {
-                let who = TranscriptFormatter.label(for: turn.speaker, myName: myName)
+                let who = labels.label(for: turn)
                 lines.append("**[\(TranscriptFormatter.timestamp(turn.start))] \(who):** \(turn.text)  ")
             }
         }
