@@ -26,6 +26,12 @@ echo "▸ Assembling ${APP}…"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/Polly" "$APP/Contents/MacOS/Polly"
+# SwiftPM resource bundles from dependencies (e.g. FluidAudio) live next to
+# the binary; Bundle.module finds them in Contents/Resources.
+for bundle in "$BIN_DIR"/*.bundle; do
+  [[ -e "$bundle" ]] || continue
+  cp -R "$bundle" "$APP/Contents/Resources/"
+done
 cp App/Info.plist "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
