@@ -135,9 +135,7 @@ final class ChannelPipeline {
     }
 
     func finish() async {
-        lock.lock()
-        stopped = true
-        lock.unlock()
+        lock.withLock { stopped = true }
         await engine.finish()
     }
 }

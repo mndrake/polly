@@ -45,10 +45,10 @@ final class LegacySpeechEngine: SpeechTranscriptionEngine {
 
     func start(onResult: @escaping EngineResultHandler) async throws {
         guard recognizer != nil else { throw TranscriptionError.notPrepared }
-        lock.lock()
-        self.onResult = onResult
-        beginRequestLocked()
-        lock.unlock()
+        lock.withLock {
+            self.onResult = onResult
+            beginRequestLocked()
+        }
 
         let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
         timer.schedule(deadline: .now() + 0.5, repeating: 0.5)
@@ -67,29 +67,26 @@ final class LegacySpeechEngine: SpeechTranscriptionEngine {
     func finish() async {
         timer?.cancel()
         timer = nil
-        lock.lock()
-        request?.endAudio()
-        request = nil
-        let hasPending = !tasks.isEmpty
-        lock.unlock()
+        let hasPending = lock.withLock {
+            request?.endAudio()
+            request = nil
+            return !tasks.isEmpty
+        }
 
         // Give outstanding requests a moment to deliver their final results.
         if hasPending {
             for _ in 0..<30 {
                 try? await Task.sleep(nanoseconds: 100_000_000)
-                lock.lock()
-                let done = tasks.isEmpty
-                lock.unlock()
-                if done { break }
+                if lock.withLock({ tasks.isEmpty }) { break }
             }
         }
-        lock.lock()
-        let leftovers = partials.values.sorted { $0.start < $1.start }
-        partials.removeAll()
-        tasks.values.forEach { $0.cancel() }
-        tasks.removeAll()
-        let handler = onResult
-        lock.unlock()
+        let (leftovers, handler) = lock.withLock {
+            let leftovers = partials.values.sorted { $0.start < $1.start }
+            partials.removeAll()
+            tasks.values.forEach { $0.cancel() }
+            tasks.removeAll()
+            return (leftovers, onResult)
+        }
         for partial in leftovers where !partial.text.isEmpty {
             handler?(partial.text, true, partial.start, partial.end)
         }

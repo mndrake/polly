@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   core-linux:
@@ -23,8 +24,13 @@ jobs:
         run: sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
       - run: swift --version
       - run: swift test
-      - run: scripts/build-app.sh
+      - name: Build Polly.app (universal)
+        run: scripts/build-app.sh
+        env:
+          UNIVERSAL: "1"
+          ZIP: "1"
       - uses: actions/upload-artifact@v4
         with:
-          name: Polly.app
-          path: build/Polly.app
+          name: Polly
+          path: build/Polly.zip
+          if-no-files-found: error

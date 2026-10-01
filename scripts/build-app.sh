@@ -22,7 +22,7 @@ echo "▸ Building ($CONFIGURATION)…"
 swift build -c "$CONFIGURATION" --product Polly ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"}
 BIN_DIR="$(swift build -c "$CONFIGURATION" --product Polly ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --show-bin-path)"
 
-echo "▸ Assembling $APP…"
+echo "▸ Assembling ${APP}…"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/Polly" "$APP/Contents/MacOS/Polly"
@@ -36,7 +36,13 @@ codesign --force --options runtime \
   "$APP"
 codesign --verify --verbose=2 "$APP"
 
-echo "✓ Built $APP"
+if [[ "${ZIP:-0}" == "1" ]]; then
+  # ditto preserves the bundle's permissions, symlinks and signature.
+  ditto -c -k --keepParent "$APP" "$OUT_DIR/Polly.zip"
+  echo "✓ Zipped $OUT_DIR/Polly.zip"
+fi
+
+echo "✓ Built ${APP}"
 echo "  Run it with: open \"$APP\""
 if [[ "$SIGN_IDENTITY" == "-" ]]; then
   echo "  (Ad-hoc signed: macOS may ask for permissions again after each rebuild.)"
