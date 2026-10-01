@@ -21,6 +21,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var questionErrors: [UUID: String] = [:]
 
     let monitor = MeetingMonitor()
+    private let captionPanel = LiveCaptionPanelController()
     private let notifier = MeetingNotifier()
     private let store: MeetingStore
     private var claudeTasks: [UUID: Task<Void, Never>] = [:]
@@ -131,9 +132,13 @@ final class AppModel: ObservableObject {
         selection = meeting.id
         monitor.isRecording = true
         notifier.clear()
+        if AppSettings.showCaptionPanel {
+            captionPanel.show(session: session, model: self)
+        }
 
         await session.start()
         if case let .failed(message) = session.state {
+            captionPanel.close()
             recording = nil
             monitor.isRecording = false
             selection = meetings.first?.id
@@ -144,6 +149,7 @@ final class AppModel: ObservableObject {
     func stopRecording() async {
         guard let session = recording, session.isActive else { return }
         let meeting = await session.stop()
+        captionPanel.close()
         monitor.isRecording = false
         recording = nil
 
@@ -158,6 +164,15 @@ final class AppModel: ObservableObject {
         if AppSettings.autoSummarize, KeychainStore.apiKey != nil {
             summarize(meeting.id)
         }
+    }
+
+    var isCaptionPanelVisible: Bool { captionPanel.isVisible }
+
+    /// Shows or hides the floating live-caption window for the current recording.
+    func toggleCaptionPanel() {
+        guard let session = recording, session.isActive else { return }
+        captionPanel.toggle(session: session, model: self)
+        objectWillChange.send()
     }
 
     func toggleRecording() {

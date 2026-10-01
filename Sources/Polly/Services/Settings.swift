@@ -21,6 +21,7 @@ enum SettingsKey {
     static let autoStop = "autoStop"
     static let autoSummarize = "autoSummarize"
     static let customInstructions = "customInstructions"
+    static let showCaptionPanel = "showCaptionPanel"
 }
 
 enum CaptureMode: String, CaseIterable, Identifiable {
@@ -57,6 +58,7 @@ enum AppSettings {
             SettingsKey.autoStop: true,
             SettingsKey.autoSummarize: true,
             SettingsKey.customInstructions: "",
+            SettingsKey.showCaptionPanel: true,
         ])
     }
 
@@ -92,6 +94,7 @@ enum AppSettings {
     static var autoStart: Bool { defaults.bool(forKey: SettingsKey.autoStart) }
     static var autoStop: Bool { defaults.bool(forKey: SettingsKey.autoStop) }
     static var autoSummarize: Bool { defaults.bool(forKey: SettingsKey.autoSummarize) }
+    static var showCaptionPanel: Bool { defaults.bool(forKey: SettingsKey.showCaptionPanel) }
     static var customInstructions: String? { defaults.string(forKey: SettingsKey.customInstructions) }
 
     /// Locales offered in Settings (those with on-device recognition support).

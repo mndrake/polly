@@ -51,6 +51,13 @@ struct LiveRecordingView: View {
             }
             Spacer()
             Button {
+                model.toggleCaptionPanel()
+            } label: {
+                Label("Floating Captions", systemImage: "captions.bubble")
+            }
+            .controlSize(.large)
+            .help("Show live captions in a small window that stays on top of your meeting")
+            Button {
                 Task { await model.stopRecording() }
             } label: {
                 Label("Stop", systemImage: "stop.circle.fill")
@@ -111,16 +118,25 @@ private struct LevelMeter: View {
             Image(systemName: level == nil ? "speaker.slash" : "waveform")
                 .foregroundStyle(level == nil ? Color.secondary : Color.green)
             Text(label).font(.caption).foregroundStyle(.secondary)
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(.quaternary)
-                    Capsule().fill(.green)
-                        .frame(width: geo.size.width * CGFloat(normalized))
-                }
-            }
-            .frame(width: 80, height: 5)
+            LevelBar(level: level)
+                .frame(width: 80, height: 5)
         }
         .help(level == nil ? "Not capturing" : "Input level")
+    }
+}
+
+/// A horizontal input-level bar.
+struct LevelBar: View {
+    let level: Float?
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(.quaternary)
+                Capsule().fill(.green)
+                    .frame(width: geo.size.width * CGFloat(normalized))
+            }
+        }
     }
 
     /// Maps RMS to a perceptual 0…1 range (-50 dB … 0 dB).

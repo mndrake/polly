@@ -26,6 +26,13 @@ struct MenuBarView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
+                Button {
+                    model.toggleCaptionPanel()
+                } label: {
+                    Label(model.isCaptionPanelVisible ? "Hide Floating Captions" : "Show Floating Captions",
+                          systemImage: "captions.bubble").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
             } else {
                 if model.monitor.detected.isEmpty {
                     Text("No meeting detected").font(.caption).foregroundStyle(.secondary)

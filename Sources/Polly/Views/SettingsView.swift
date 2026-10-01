@@ -79,6 +79,7 @@ private struct TranscriptionSettings: View {
     @AppStorage(SettingsKey.captureMode) private var captureMode = CaptureMode.meetingApp.rawValue
     @AppStorage(SettingsKey.captureMicrophone) private var captureMicrophone = true
     @AppStorage(SettingsKey.echoSuppression) private var echoSuppression = true
+    @AppStorage(SettingsKey.showCaptionPanel) private var showCaptionPanel = true
     @EnvironmentObject private var model: AppModel
 
     private let locales = AppSettings.transcriptionLocales
@@ -108,6 +109,7 @@ private struct TranscriptionSettings: View {
                 }
                 Toggle("Transcribe my microphone", isOn: $captureMicrophone)
                 Toggle("Remove speaker echo from my channel", isOn: $echoSuppression)
+                Toggle("Show floating live captions while recording", isOn: $showCaptionPanel)
                 Text("If you're not wearing headphones, your microphone also hears other participants. Echo removal drops those duplicate lines. Headphones give the cleanest transcript.")
                     .font(.caption).foregroundStyle(.secondary)
             }
