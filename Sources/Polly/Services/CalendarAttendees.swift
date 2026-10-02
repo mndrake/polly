@@ -12,7 +12,7 @@ enum MeetingCalendar {
             do {
                 if let event = CalendarMatching.best(try await google.events(around: date), at: date) { return event }
             } catch {
-                NSLog("Polly: Google Calendar lookup failed: \(error.localizedDescription)")
+                PollyLog.info("Google Calendar lookup failed: \(error.localizedDescription)")
             }
         }
         return await AppleCalendar.event(at: date)

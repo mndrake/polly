@@ -187,6 +187,8 @@ private struct TranscriptionSettings: View {
                     Button("Open Settings") { Permissions.openMicrophoneSettings() }
                 }
                 Button("Show Transcripts Folder") { model.revealDataFolder() }
+                Button("Show Diagnostics Log") { PollyLog.reveal() }
+                    .help("A log of what audio capture and transcription did (no transcript text). Send it if recording isn't working.")
             }
         }
         .formStyle(.grouped)

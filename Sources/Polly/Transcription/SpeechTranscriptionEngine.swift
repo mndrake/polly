@@ -33,6 +33,10 @@ typealias EngineResultHandler = @Sendable (_ text: String, _ isFinal: Bool, _ st
 /// A streaming, on-device speech-to-text engine for a single audio channel.
 protocol SpeechTranscriptionEngine: AnyObject {
     var name: String { get }
+    /// Whether in-progress results carry real audio time ranges (used for the lag readout).
+    var reportsAccurateTiming: Bool { get }
+    /// Called (on any thread) if the engine stops working mid-recording.
+    var onFailure: ((String) -> Void)? { get set }
     /// Format buffers must be in when passed to `append`. Valid after `prepare`.
     var audioFormat: AVAudioFormat { get }
     /// Loads models / checks permissions. May download assets.
@@ -59,23 +63,38 @@ enum EnginePreference: String, CaseIterable, Identifiable {
 }
 
 enum TranscriptionEngineFactory {
-    /// Creates and prepares an engine, falling back to SFSpeechRecognizer if
-    /// SpeechAnalyzer is unavailable or doesn't support the locale.
-    static func makePreparedEngine(preference: EnginePreference, locale: Locale) async throws -> SpeechTranscriptionEngine {
+    struct Prepared {
+        let engine: SpeechTranscriptionEngine
+        /// Set when Polly had to fall back from its preferred engine, with the reason.
+        let fallbackNote: String?
+    }
+
+    /// Creates and prepares an engine: SpeechAnalyzer with low-latency results,
+    /// then SpeechAnalyzer without them, then SFSpeechRecognizer.
+    static func makePreparedEngine(preference: EnginePreference, locale: Locale) async throws -> Prepared {
+        var failures: [String] = []
         #if compiler(>=6.2)
         if preference == .automatic, #available(macOS 26.0, *) {
-            let engine = SpeechAnalyzerEngine()
-            do {
-                try await engine.prepare(locale: locale)
-                return engine
-            } catch {
-                NSLog("Polly: SpeechAnalyzer unavailable (\(error.localizedDescription)); falling back to SFSpeechRecognizer")
+            for lowLatency in [true, false] {
+                let engine = SpeechAnalyzerEngine(lowLatency: lowLatency)
+                do {
+                    try await engine.prepare(locale: locale)
+                    PollyLog.info("Using SpeechAnalyzer (lowLatency: \(lowLatency), format: \(engine.audioFormat))")
+                    let note = failures.isEmpty ? nil : "Low-latency mode is unavailable; using standard SpeechAnalyzer."
+                    return Prepared(engine: engine, fallbackNote: note)
+                } catch {
+                    PollyLog.info("SpeechAnalyzer (lowLatency: \(lowLatency)) failed to prepare: \(error.localizedDescription)")
+                    failures.append(error.localizedDescription)
+                }
             }
         }
         #endif
         let engine = LegacySpeechEngine()
         try await engine.prepare(locale: locale)
-        return engine
+        PollyLog.info("Using SFSpeechRecognizer")
+        let note = failures.isEmpty ? nil
+            : "Apple's SpeechAnalyzer couldn't start (\(failures.last ?? "unknown error")), so Polly is using the older recognizer."
+        return Prepared(engine: engine, fallbackNote: note)
     }
 }
 
@@ -97,6 +116,9 @@ final class ChannelPipeline {
     /// Latest input level (0…1), read from the main thread for meters.
     private(set) var level: Float = 0
     private(set) var peakLevelSinceStart: Float = 0
+    /// Diagnostics: buffers received from capture and audio seconds fed to the engine.
+    private(set) var buffersReceived = 0
+    private(set) var secondsFed: Double = 0
 
     init(speaker: Speaker, engine: SpeechTranscriptionEngine, startDate: Date) {
         self.speaker = speaker
@@ -119,6 +141,7 @@ final class ChannelPipeline {
         defer { lock.unlock() }
         guard !stopped else { return }
 
+        buffersReceived += 1
         let rms = buffer.rmsLevel
         level = rms
         peakLevelSinceStart = max(peakLevelSinceStart, rms)
@@ -135,13 +158,45 @@ final class ChannelPipeline {
             engine.append(converted)
             tap?(converted)
             aligner.didFeed(frames: Int(converted.frameLength))
+            secondsFed = aligner.fedDuration
         } catch {
-            NSLog("Polly: dropping \(speaker) audio buffer: \(error.localizedDescription)")
+            PollyLog.info("Dropping \(speaker) audio buffer: \(error.localizedDescription)")
         }
     }
 
-    func finish() async {
+    /// Stops feeding audio and waits (at most `timeout`) for final results,
+    /// so a stuck recognizer can never hang Stop.
+    func finish(timeout: TimeInterval = 10) async {
         lock.withLock { stopped = true }
-        await engine.finish()
+        let engine = self.engine
+        let speaker = self.speaker
+        let once = OnceFlag()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            Task {
+                await engine.finish()
+                if once.claim() { continuation.resume() }
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                if once.claim() {
+                    PollyLog.info("\(engine.name) (\(speaker.rawValue)) didn't finish within \(Int(timeout))s; continuing without its last results")
+                    continuation.resume()
+                }
+            }
+        }
+    }
+}
+
+/// Lets exactly one of several racing callers proceed.
+final class OnceFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if claimed { return false }
+        claimed = true
+        return true
     }
 }

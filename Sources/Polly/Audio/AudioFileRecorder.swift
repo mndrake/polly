@@ -28,7 +28,7 @@ final class AudioFileRecorder {
             try file.write(from: buffer)
         } catch {
             failed = true
-            NSLog("Polly: stopped writing speaker-separation audio: \(error.localizedDescription)")
+            PollyLog.info("Stopped writing speaker-separation audio: \(error.localizedDescription)")
         }
     }
 

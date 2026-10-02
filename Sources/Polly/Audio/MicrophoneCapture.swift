@@ -20,8 +20,7 @@ final class MicrophoneCapture {
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else { throw CaptureError.noInputDevice }
 
-        // ~20 ms buffers at 48 kHz (a request; the system may round it).
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
             self?.onBuffer?(buffer)
         }
         engine.prepare()

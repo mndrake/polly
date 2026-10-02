@@ -45,6 +45,9 @@ final class RecordingSession: ObservableObject {
     private var timers: [Task<Void, Never>] = []
     private var lastSavedSegmentCount = 0
     private var othersRecorder: AudioFileRecorder?
+    private var resultCounts: [Speaker: Int] = [:]
+    private var lastResultAt: [Speaker: Date] = [:]
+    private var warnedSilentEngine: Set<Speaker> = []
     /// After `stop()`: the remote channel's audio, for speaker separation. The caller deletes it.
     private(set) var othersAudioURL: URL?
 
@@ -66,11 +69,15 @@ final class RecordingSession: ObservableObject {
     // MARK: - Start
 
     func start() async {
+        let version = ProcessInfo.processInfo.operatingSystemVersionString
+        let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+        PollyLog.info("Starting recording: Polly \(appVersion), macOS \(version), target \(configuration.target), locale \(configuration.locale.identifier), engine preference \(configuration.engine.rawValue), mic \(configuration.captureMicrophone), screen recording allowed \(Permissions.hasScreenRecording)")
         do {
             try await startChannels()
             state = .recording
             startTimers()
         } catch {
+            PollyLog.info("Recording failed to start: \(error.localizedDescription)")
             await tearDown()
             state = .failed(error.localizedDescription)
         }
@@ -95,8 +102,11 @@ final class RecordingSession: ObservableObject {
 
         // Remote participants (meeting app audio).
         do {
-            let engine = try await TranscriptionEngineFactory.makePreparedEngine(preference: configuration.engine, locale: configuration.locale)
+            let prepared = try await TranscriptionEngineFactory.makePreparedEngine(preference: configuration.engine, locale: configuration.locale)
+            let engine = prepared.engine
             engineName = engine.name
+            noteFallback(prepared.fallbackNote)
+            watchFailures(of: engine, speaker: .others)
             let pipeline = ChannelPipeline(speaker: .others, engine: engine, startDate: startDate)
             if configuration.separateSpeakers {
                 let url = AudioFileRecorder.directory.appendingPathComponent("\(meeting.id.uuidString).caf")
@@ -123,7 +133,9 @@ final class RecordingSession: ObservableObject {
             }
             systemAudio = capture
             pipelines[.others] = pipeline
+            PollyLog.info("Meeting audio capture started (target: \(configuration.target))")
         } catch {
+            PollyLog.info("Meeting audio channel failed: \(error.localizedDescription) (screen recording allowed: \(Permissions.hasScreenRecording))")
             if !Permissions.hasScreenRecording {
                 warnings.append("Screen Recording permission is needed to hear other participants. Enable Polly in System Settings → Privacy & Security → Screen & System Audio Recording, then restart Polly.")
             } else {
@@ -134,8 +146,11 @@ final class RecordingSession: ObservableObject {
         // The local user (microphone).
         if micAllowed {
             do {
-                let engine = try await TranscriptionEngineFactory.makePreparedEngine(preference: configuration.engine, locale: configuration.locale)
+                let prepared = try await TranscriptionEngineFactory.makePreparedEngine(preference: configuration.engine, locale: configuration.locale)
+                let engine = prepared.engine
                 engineName = engineName ?? engine.name
+                noteFallback(prepared.fallbackNote)
+                watchFailures(of: engine, speaker: .me)
                 let pipeline = ChannelPipeline(speaker: .me, engine: engine, startDate: startDate)
                 try await pipeline.start(onUpdate: makeUpdateHandler())
 
@@ -144,7 +159,9 @@ final class RecordingSession: ObservableObject {
                 try capture.start()
                 microphone = capture
                 pipelines[.me] = pipeline
+                PollyLog.info("Microphone capture started")
             } catch {
+                PollyLog.info("Microphone channel failed: \(error.localizedDescription)")
                 warnings.append("Couldn't capture the microphone: \(error.localizedDescription)")
             }
         }
@@ -156,6 +173,22 @@ final class RecordingSession: ObservableObject {
         }
     }
 
+    private func noteFallback(_ note: String?) {
+        guard let note, !warnings.contains(note) else { return }
+        warnings.append(note)
+    }
+
+    private func watchFailures(of engine: SpeechTranscriptionEngine, speaker: Speaker) {
+        engine.onFailure = { [weak self] message in
+            PollyLog.info("Engine failure (\(speaker.rawValue)): \(message)")
+            Task { @MainActor in
+                guard let self, self.isActive else { return }
+                let warning = "\(speaker == .me ? "Your microphone" : "Meeting audio"): \(message)"
+                if !self.warnings.contains(warning) { self.warnings.append(warning) }
+            }
+        }
+    }
+
     private func makeUpdateHandler() -> @Sendable (TranscriptionUpdate) -> Void {
         { [weak self] update in
             Task { @MainActor in self?.apply(update) }
@@ -164,8 +197,12 @@ final class RecordingSession: ObservableObject {
 
     private func apply(_ update: TranscriptionUpdate) {
         guard isActive || state == .stopping else { return }
-        // Measure on in-progress results: they're what you see first.
-        if !update.isFinal, !update.text.isEmpty, state == .recording {
+        resultCounts[update.speaker, default: 0] += 1
+        lastResultAt[update.speaker] = Date()
+        // Measure on in-progress results (what you see first), and only for
+        // engines whose results carry real audio timings.
+        if !update.isFinal, !update.text.isEmpty, state == .recording,
+           pipelines[update.speaker]?.engine.reportsAccurateTiming == true {
             latency.record(speaker: update.speaker, resultEnd: update.end,
                            now: Date().timeIntervalSince(meeting.startedAt))
         }
@@ -191,13 +228,12 @@ final class RecordingSession: ObservableObject {
                 self.levels = levels
             }
         })
-        // Log transcription lag so it can be compared across settings and Macs.
+        // Diagnostics every 15 s, and a watchdog for a channel that hears
+        // audio but produces no text.
         timers.append(Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 15_000_000_000)
-                guard let self else { return }
-                let parts = self.latency.smoothed.map { "\($0.key.rawValue)=\(String(format: "%.2f", $0.value))s" }.sorted()
-                if !parts.isEmpty { NSLog("Polly: live transcription lag \(parts.joined(separator: " "))") }
+                self?.checkHealth()
             }
         })
         // Autosave so a crash never loses a meeting.
@@ -218,6 +254,32 @@ final class RecordingSession: ObservableObject {
         })
     }
 
+    private func checkHealth() {
+        guard state == .recording else { return }
+        let elapsed = Date().timeIntervalSince(meeting.startedAt)
+        for (speaker, pipeline) in pipelines {
+            let lag = latency.smoothed[speaker].map { String(format: "%.2fs", $0) } ?? "n/a"
+            PollyLog.info("Channel \(speaker.rawValue): engine=\(pipeline.engine.name) buffers=\(pipeline.buffersReceived) audioFed=\(String(format: "%.1f", pipeline.secondsFed))s of \(String(format: "%.1f", elapsed))s results=\(resultCounts[speaker] ?? 0) peakLevel=\(String(format: "%.4f", pipeline.peakLevelSinceStart)) lag=\(lag)")
+
+            // Sound has been heard but nothing transcribed for 30 s.
+            let lastText = lastResultAt[speaker] ?? meeting.startedAt
+            if pipeline.peakLevelSinceStart > 0.01, Date().timeIntervalSince(lastText) > 30,
+               elapsed > 30, !warnedSilentEngine.contains(speaker) {
+                warnedSilentEngine.insert(speaker)
+                let channel = speaker == .me ? "your microphone" : "the meeting audio"
+                warnings.append("Polly hears \(channel) but \(pipeline.engine.name) hasn't produced any text for 30 seconds. Try stopping and starting again; if it keeps happening, use Settings → Transcription → Show Diagnostics Log and send the log.")
+                PollyLog.info("Watchdog: no results from \(speaker.rawValue) for 30s despite audio")
+            }
+            if pipeline.buffersReceived == 0, elapsed > 20, !warnedSilentEngine.contains(speaker) {
+                warnedSilentEngine.insert(speaker)
+                warnings.append(speaker == .me
+                    ? "No audio is arriving from your microphone. Check System Settings → Privacy & Security → Microphone."
+                    : "No audio is arriving from the meeting app. Check Screen & System Audio Recording permission, then restart Polly.")
+                PollyLog.info("Watchdog: no buffers from \(speaker.rawValue) after 20s")
+            }
+        }
+    }
+
     private func autosave() {
         guard state == .recording, segments.count != lastSavedSegmentCount else { return }
         lastSavedSegmentCount = segments.count
@@ -232,6 +294,7 @@ final class RecordingSession: ObservableObject {
     func stop() async -> Meeting {
         guard isActive else { return meeting }
         state = .stopping
+        PollyLog.info("Stopping recording after \(String(format: "%.0f", Date().timeIntervalSince(meeting.startedAt)))s; results: \(resultCounts.map { "\($0.key.rawValue)=\($0.value)" }.sorted().joined(separator: " "))")
         await tearDown()
 
         builder.flush()

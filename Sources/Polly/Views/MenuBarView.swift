@@ -76,6 +76,8 @@ struct MenuBarView: View {
                 Button("Open Polly") { showMainWindow() }
                 Spacer()
                 SettingsLink { Text("Settings…") }
+                Button("Log") { PollyLog.reveal() }
+                    .help("Show the diagnostics log")
                 Button("Quit") { NSApp.terminate(nil) }
             }
             .buttonStyle(.link)

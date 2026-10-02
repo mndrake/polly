@@ -7,6 +7,14 @@ import Speech
 @available(macOS 26.0, *)
 final class SpeechAnalyzerEngine: SpeechTranscriptionEngine {
     let name = "SpeechAnalyzer"
+    let reportsAccurateTiming = true
+    var onFailure: ((String) -> Void)?
+    /// Bias toward showing words sooner (`.fastResults`).
+    private let lowLatency: Bool
+
+    init(lowLatency: Bool) {
+        self.lowLatency = lowLatency
+    }
 
     private var transcriber: SpeechTranscriber?
     private var analyzer: SpeechAnalyzer?
@@ -23,7 +31,7 @@ final class SpeechAnalyzerEngine: SpeechTranscriptionEngine {
             transcriptionOptions: [],
             // Volatile results show words as they're heard; fast results bias
             // the model toward responsiveness over waiting for more context.
-            reportingOptions: [.volatileResults, .fastResults],
+            reportingOptions: lowLatency ? [.volatileResults, .fastResults] : [.volatileResults],
             attributeOptions: [.audioTimeRange]
         )
         // Downloads the language model the first time (managed by the OS).
@@ -36,9 +44,13 @@ final class SpeechAnalyzerEngine: SpeechTranscriptionEngine {
         audioFormat = format
         self.transcriber = transcriber
         let analyzer = SpeechAnalyzer(modules: [transcriber])
-        // Load the model now rather than when the first audio arrives, so the
-        // first words of the meeting aren't delayed.
-        try await analyzer.prepareToAnalyze(in: format)
+        // Try to load the model now so the first words aren't delayed. This is
+        // only an optimisation: if it fails, analysis still starts normally.
+        do {
+            try await analyzer.prepareToAnalyze(in: format)
+        } catch {
+            PollyLog.info("SpeechAnalyzer prepareToAnalyze failed (continuing): \(error.localizedDescription)")
+        }
         self.analyzer = analyzer
     }
 
@@ -58,7 +70,8 @@ final class SpeechAnalyzerEngine: SpeechTranscriptionEngine {
                     onResult(text, result.isFinal, start, end)
                 }
             } catch {
-                NSLog("Polly: SpeechTranscriber results ended with error: \(error.localizedDescription)")
+                PollyLog.info("SpeechTranscriber results ended with error: \(error.localizedDescription)")
+                self.onFailure?("Apple's speech recognizer stopped: \(error.localizedDescription)")
             }
         }
 
@@ -75,7 +88,7 @@ final class SpeechAnalyzerEngine: SpeechTranscriptionEngine {
         do {
             try await analyzer?.finalizeAndFinishThroughEndOfInput()
         } catch {
-            NSLog("Polly: SpeechAnalyzer finalize failed: \(error.localizedDescription)")
+            PollyLog.info("SpeechAnalyzer finalize failed: \(error.localizedDescription)")
         }
         await resultsTask?.value
         resultsTask = nil
