@@ -1,3 +1,5 @@
+<img src="App/Icon/AppIcon-1024.png" width="128" alt="Polly app icon">
+
 # Polly
 
 A native macOS app that transcribes your video calls on-device and writes
@@ -121,6 +123,7 @@ Sources/Polly/          The macOS app
   Views/                SwiftUI
 Tests/PollyCoreTests/   Unit tests
 scripts/build-app.sh    Builds and signs Polly.app
+scripts/make-icon.py    Renders App/Icon/AppIcon.svg into the .icns (pip install pillow resvg-py)
 ```
 
 ## Tests
