@@ -42,6 +42,7 @@ struct LiveRecordingView: View {
                     if let engine = session.engineName {
                         Text("· \(engine), on device").foregroundStyle(.secondary)
                     }
+                    LagBadge(latency: session.latency)
                 }
                 .font(.callout)
                 HStack(spacing: 18) {
@@ -144,5 +145,26 @@ struct LevelBar: View {
         guard let level, level > 0 else { return 0 }
         let db = 20 * log10(level)
         return min(1, max(0, (db + 50) / 50))
+    }
+}
+
+/// Shows how far live text lags behind speech (e.g. "0.8 s behind").
+struct LagBadge: View {
+    let latency: LatencyMeter
+
+    var body: some View {
+        if let lag = latency.overall {
+            Label(LatencyMeter.describe(lag), systemImage: "timer")
+                .foregroundStyle(lag < 1.5 ? Color.green : lag < 3 ? Color.orange : Color.red)
+                .help(help)
+        }
+    }
+
+    private var help: String {
+        let parts = Speaker.allCases.compactMap { speaker -> String? in
+            guard let lag = latency.smoothed[speaker] else { return nil }
+            return "\(speaker == .me ? "Your mic" : "Meeting audio"): \(LatencyMeter.describe(lag))"
+        }
+        return "How long after someone speaks their words appear.\n" + parts.joined(separator: "\n")
     }
 }

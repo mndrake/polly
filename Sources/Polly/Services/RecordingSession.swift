@@ -30,6 +30,8 @@ final class RecordingSession: ObservableObject {
     @Published private(set) var levels: [Speaker: Float] = [:]
     @Published private(set) var warnings: [String] = []
     @Published private(set) var engineName: String?
+    /// How far live text lags behind the audio, per channel.
+    @Published private(set) var latency = LatencyMeter()
 
     let configuration: Configuration
     /// Set when the recording was started from a detected meeting (used for auto-stop).
@@ -162,6 +164,11 @@ final class RecordingSession: ObservableObject {
 
     private func apply(_ update: TranscriptionUpdate) {
         guard isActive || state == .stopping else { return }
+        // Measure on in-progress results: they're what you see first.
+        if !update.isFinal, !update.text.isEmpty, state == .recording {
+            latency.record(speaker: update.speaker, resultEnd: update.end,
+                           now: Date().timeIntervalSince(meeting.startedAt))
+        }
         builder.apply(update)
         segments = builder.displaySegments
         liveText = builder.liveText
@@ -182,6 +189,15 @@ final class RecordingSession: ObservableObject {
                 var levels: [Speaker: Float] = [:]
                 for (speaker, pipeline) in self.pipelines { levels[speaker] = pipeline.level }
                 self.levels = levels
+            }
+        })
+        // Log transcription lag so it can be compared across settings and Macs.
+        timers.append(Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 15_000_000_000)
+                guard let self else { return }
+                let parts = self.latency.smoothed.map { "\($0.key.rawValue)=\(String(format: "%.2f", $0.value))s" }.sorted()
+                if !parts.isEmpty { NSLog("Polly: live transcription lag \(parts.joined(separator: " "))") }
             }
         })
         // Autosave so a crash never loses a meeting.

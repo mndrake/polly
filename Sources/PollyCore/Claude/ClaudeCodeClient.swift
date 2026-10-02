@@ -116,46 +116,6 @@ public struct ClaudeCodeClient: ClaudeStreaming {
             let lines = LineBuffer()
             let errors = ErrorBuffer()
 
-            stderr.fileHandleForReading.readabilityHandler = { handle in
-                errors.append(handle.availableData)
-            }
-            // All stdout handling, including completion, happens on this
-            // handler's serial callbacks, so the final `result` line is always
-            // processed before we decide how the run ended.
-            stdout.fileHandleForReading.readabilityHandler = { handle in
-                let data = handle.availableData
-                var pending = lines.append(data)
-                let atEOF = data.isEmpty
-                if atEOF, let last = lines.flush() { pending.append(last) }
-
-                if !state.hasFailed {
-                    do {
-                        for line in pending {
-                            for event in try state.handle(line: line) { continuation.yield(event) }
-                        }
-                    } catch {
-                        state.markFailed()
-                        continuation.finish(throwing: error)
-                    }
-                }
-                guard atEOF else { return }
-
-                handle.readabilityHandler = nil
-                process.waitUntilExit()
-                stderr.fileHandleForReading.readabilityHandler = nil
-                errors.append(stderr.fileHandleForReading.readDataToEndOfFile())
-                try? FileManager.default.removeItem(at: workDir)
-                guard !state.hasFailed else { return }
-                do {
-                    for event in try state.finish(exitCode: process.terminationStatus, stderr: errors.text) {
-                        continuation.yield(event)
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-
             continuation.onTermination = { _ in
                 if process.isRunning { process.terminate() }
             }
@@ -168,11 +128,56 @@ public struct ClaudeCodeClient: ClaudeStreaming {
                 return
             }
 
-            // Write the (possibly large) prompt off the reading path to avoid pipe deadlocks.
+            // Write the (possibly large) prompt on its own thread so neither
+            // side blocks on a full pipe.
             DispatchQueue.global(qos: .userInitiated).async {
                 let handle = stdin.fileHandleForWriting
                 handle.write(Data(input.utf8))
                 try? handle.close()
+            }
+            // Drain stderr concurrently for the same reason.
+            let stderrDone = DispatchSemaphore(value: 0)
+            DispatchQueue.global(qos: .utility).async {
+                errors.append(stderr.fileHandleForReading.readDataToEndOfFile())
+                stderrDone.signal()
+            }
+
+            // Read stdout with blocking reads on a dedicated thread. An empty
+            // read means end of output, which (unlike readability callbacks)
+            // is always observed, so the final `result` line is processed
+            // before we decide how the run ended.
+            Thread.detachNewThread {
+                let handle = stdout.fileHandleForReading
+                while true {
+                    let data = handle.availableData
+                    var pending = lines.append(data)
+                    let atEOF = data.isEmpty
+                    if atEOF, let last = lines.flush() { pending.append(last) }
+                    if !state.hasFailed {
+                        do {
+                            for line in pending {
+                                for event in try state.handle(line: line) { continuation.yield(event) }
+                            }
+                        } catch {
+                            state.markFailed()
+                            continuation.finish(throwing: error)
+                        }
+                    }
+                    if atEOF { break }
+                }
+
+                process.waitUntilExit()
+                stderrDone.wait()
+                try? FileManager.default.removeItem(at: workDir)
+                guard !state.hasFailed else { return }
+                do {
+                    for event in try state.finish(exitCode: process.terminationStatus, stderr: errors.text) {
+                        continuation.yield(event)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
             }
         }
     }

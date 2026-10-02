@@ -21,7 +21,9 @@ final class SpeechAnalyzerEngine: SpeechTranscriptionEngine {
         let transcriber = SpeechTranscriber(
             locale: supportedLocale,
             transcriptionOptions: [],
-            reportingOptions: [.volatileResults],
+            // Volatile results show words as they're heard; fast results bias
+            // the model toward responsiveness over waiting for more context.
+            reportingOptions: [.volatileResults, .fastResults],
             attributeOptions: [.audioTimeRange]
         )
         // Downloads the language model the first time (managed by the OS).
@@ -33,7 +35,11 @@ final class SpeechAnalyzerEngine: SpeechTranscriptionEngine {
         }
         audioFormat = format
         self.transcriber = transcriber
-        analyzer = SpeechAnalyzer(modules: [transcriber])
+        let analyzer = SpeechAnalyzer(modules: [transcriber])
+        // Load the model now rather than when the first audio arrives, so the
+        // first words of the meeting aren't delayed.
+        try await analyzer.prepareToAnalyze(in: format)
+        self.analyzer = analyzer
     }
 
     func start(onResult: @escaping EngineResultHandler) async throws {

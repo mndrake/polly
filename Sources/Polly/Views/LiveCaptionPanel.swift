@@ -81,6 +81,7 @@ struct LiveCaptionView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 status
+                LagBadge(latency: session.latency)
                 Spacer()
                 ChannelStatus(label: TranscriptFormatter.label(for: .me, myName: myName),
                               level: session.levels[.me],
