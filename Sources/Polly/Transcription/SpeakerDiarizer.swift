@@ -14,9 +14,15 @@ enum SpeakerDiarization {
         return false
     }
 
-    /// Returns voice turns for the audio file. `progress` reports 0…1.
-    static func diarize(fileURL: URL, progress: @escaping @Sendable (Double) -> Void) async throws -> [DiarizedTurn] {
-        guard #available(macOS 15.0, *) else { return [] }
+    struct Output: Sendable {
+        var turns: [DiarizedTurn]
+        /// Mean voice embedding per diarizer speaker label.
+        var embeddings: [String: [Float]]
+    }
+
+    /// Returns voice turns and per-voice embeddings for the audio file. `progress` reports 0…1.
+    static func diarize(fileURL: URL, progress: @escaping @Sendable (Double) -> Void) async throws -> Output {
+        guard #available(macOS 15.0, *) else { return Output(turns: [], embeddings: [:]) }
         return try await DiarizerHolder.shared.diarize(fileURL: fileURL, progress: progress)
     }
 }
@@ -26,7 +32,7 @@ private actor DiarizerHolder {
     static let shared = DiarizerHolder()
     private var manager: OfflineDiarizerManager?
 
-    func diarize(fileURL: URL, progress: @escaping @Sendable (Double) -> Void) async throws -> [DiarizedTurn] {
+    func diarize(fileURL: URL, progress: @escaping @Sendable (Double) -> Void) async throws -> SpeakerDiarization.Output {
         let manager: OfflineDiarizerManager
         if let existing = self.manager {
             manager = existing
@@ -38,12 +44,28 @@ private actor DiarizerHolder {
         let result = try await manager.process(fileURL) { done, total in
             progress(total > 0 ? Double(done) / Double(total) : 0)
         }
-        return result.segments.map {
+        let turns = result.segments.map {
             DiarizedTurn(
                 speakerID: $0.speakerId,
                 start: TimeInterval($0.startTimeSeconds),
                 end: TimeInterval($0.endTimeSeconds)
             )
         }
+        // The offline pipeline provides a mean embedding per speaker; fall
+        // back to averaging segment embeddings if it doesn't.
+        var embeddings = result.speakerDatabase ?? [:]
+        if embeddings.isEmpty {
+            var sums: [String: [Float]] = [:]
+            for segment in result.segments where !segment.embedding.isEmpty {
+                if var sum = sums[segment.speakerId], sum.count == segment.embedding.count {
+                    for i in sum.indices { sum[i] += segment.embedding[i] }
+                    sums[segment.speakerId] = sum
+                } else if sums[segment.speakerId] == nil {
+                    sums[segment.speakerId] = segment.embedding
+                }
+            }
+            embeddings = sums
+        }
+        return SpeakerDiarization.Output(turns: turns, embeddings: embeddings)
     }
 }

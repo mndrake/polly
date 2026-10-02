@@ -22,11 +22,15 @@ final class AppModel: ObservableObject {
     /// Progress (0…1) of separating voices after a meeting, keyed by meeting.
     @Published private(set) var speakerProgress: [UUID: Double] = [:]
     @Published private(set) var speakerErrors: [UUID: String] = [:]
+    /// People Polly recognizes by voice.
+    @Published private(set) var voiceLibrary = VoiceLibrary()
 
     let monitor = MeetingMonitor()
+    let google = GoogleCalendarService()
     private let captionPanel = LiveCaptionPanelController()
     private let notifier = MeetingNotifier()
     private let store: MeetingStore
+    private let voiceStore = VoiceLibraryStore(url: VoiceLibraryStore.defaultURL())
     private var claudeTasks: [UUID: Task<Void, Never>] = [:]
     private var cancellables: Set<AnyCancellable> = []
 
@@ -41,6 +45,7 @@ final class AppModel: ObservableObject {
         selection = meetings.first?.id
         // Temporary audio from a recording interrupted by a crash or quit.
         AudioFileRecorder.removeLeftovers()
+        voiceLibrary = voiceStore.load()
 
         notifier.setUp()
         notifier.onStartRequested = { [weak self] bundleID in
@@ -100,6 +105,11 @@ final class AppModel: ObservableObject {
         claudeTasks[id]?.cancel()
         meetings.removeAll { $0.id == id }
         try? store.delete(id: id)
+        // Voice samples learned from this meeting go with it.
+        if voiceLibrary.profiles.contains(where: { $0.samples.contains { $0.meetingID == id } }) {
+            voiceLibrary.forget(meetingID: id)
+            saveVoiceLibrary()
+        }
         if selection == id { selection = meetings.first?.id }
     }
 
@@ -144,9 +154,10 @@ final class AppModel: ObservableObject {
 
         await session.start()
         if case .recording = session.state, AppSettings.useCalendarAttendees {
-            Task { [weak session] in
-                let names = await CalendarAttendees.names(at: Date())
-                if !names.isEmpty { session?.setAttendees(names) }
+            Task { [weak session, google] in
+                if let event = await MeetingCalendar.event(at: Date(), google: google) {
+                    session?.setCalendarEvent(event)
+                }
             }
         }
         if case let .failed(message) = session.state {
@@ -195,13 +206,18 @@ final class AppModel: ObservableObject {
         speakerProgress[id] = 0
         Task {
             do {
-                let turns = try await SpeakerDiarization.diarize(fileURL: audioURL) { [weak self] fraction in
+                let output = try await SpeakerDiarization.diarize(fileURL: audioURL) { [weak self] fraction in
                     Task { @MainActor in
                         if self?.speakerProgress[id] != nil { self?.speakerProgress[id] = fraction }
                     }
                 }
                 if var latest = meeting(id: id) {
-                    latest.segments = SpeakerAssignment.assign(turns, to: latest.segments)
+                    let result = SpeakerAssignment.assignment(output.turns, to: latest.segments)
+                    latest.segments = result.segments
+                    latest.speakerVoices = result.voices(from: output.embeddings)
+                    if AppSettings.rememberVoices {
+                        latest.recognizedSpeakers = voiceLibrary.match(latest.speakerVoices)
+                    }
                     upsert(latest)
                 }
             } catch {
@@ -222,10 +238,45 @@ final class AppModel: ObservableObject {
         if trimmed.isEmpty {
             meeting.speakerNames[speakerID] = nil
             meeting.suggestedSpeakerNames[speakerID] = nil
+            meeting.recognizedSpeakers[speakerID] = nil
         } else {
             meeting.speakerNames[speakerID] = trimmed
         }
         upsert(meeting)
+
+        // Teach (or correct) the voice library from the user's answer.
+        guard AppSettings.rememberVoices else { return }
+        if !trimmed.isEmpty, let voice = meeting.speakerVoices[speakerID] {
+            voiceLibrary.learn(name: trimmed, meetingID: id, speakerID: speakerID, voice: voice, at: meeting.startedAt)
+        } else {
+            voiceLibrary.forget(meetingID: id, speakerID: speakerID)
+        }
+        saveVoiceLibrary()
+    }
+
+    // MARK: - Voice library
+
+    func renameVoice(_ profileID: UUID, to name: String) {
+        voiceLibrary.rename(profileID: profileID, to: name)
+        saveVoiceLibrary()
+    }
+
+    func removeVoice(_ profileID: UUID) {
+        voiceLibrary.remove(profileID: profileID)
+        saveVoiceLibrary()
+    }
+
+    func forgetAllVoices() {
+        voiceLibrary.removeAll()
+        voiceStore.delete()
+    }
+
+    private func saveVoiceLibrary() {
+        do {
+            try voiceStore.save(voiceLibrary)
+        } catch {
+            alert = "Couldn't save voices: \(error.localizedDescription)"
+        }
     }
 
     var isCaptionPanelVisible: Bool { captionPanel.isVisible }

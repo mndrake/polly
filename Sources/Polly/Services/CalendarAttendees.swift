@@ -1,20 +1,36 @@
 import EventKit
 import Foundation
+import PollyCore
 
-/// Looks up who was invited to the meeting being recorded, so Claude can
-/// match separated voices to real names.
-enum CalendarAttendees {
-    /// Names of the invitees of the calendar event happening at `date`
-    /// (excluding the user), or an empty list if there is none or access is denied.
-    static func names(at date: Date) async -> [String] {
+/// Finds the calendar event for the meeting being recorded — Google Calendar
+/// first (if connected), then the calendars in macOS Calendar — so Claude
+/// can match voices to real names and the meeting gets its real title.
+@MainActor
+enum MeetingCalendar {
+    static func event(at date: Date, google: GoogleCalendarService) async -> CalendarEvent? {
+        if google.isConnected {
+            do {
+                if let event = CalendarMatching.best(try await google.events(around: date), at: date) { return event }
+            } catch {
+                NSLog("Polly: Google Calendar lookup failed: \(error.localizedDescription)")
+            }
+        }
+        return await AppleCalendar.event(at: date)
+    }
+}
+
+/// macOS Calendar (EventKit). Includes any Google, Exchange or iCloud
+/// accounts added in System Settings → Internet Accounts.
+enum AppleCalendar {
+    static func event(at date: Date) async -> CalendarEvent? {
         let store = EKEventStore()
         switch EKEventStore.authorizationStatus(for: .event) {
         case .fullAccess:
             break
         case .notDetermined:
-            guard (try? await store.requestFullAccessToEvents()) == true else { return [] }
+            guard (try? await store.requestFullAccessToEvents()) == true else { return nil }
         default:
-            return []
+            return nil
         }
 
         let window = store.predicateForEvents(
@@ -22,21 +38,23 @@ enum CalendarAttendees {
             end: date.addingTimeInterval(4 * 3600),
             calendars: nil
         )
-        // Events in progress (or starting within 15 minutes) that have invitees,
-        // closest start time first.
-        let candidates = store.events(matching: window)
-            .filter { !$0.isAllDay && ($0.attendees?.isEmpty == false) }
-            .filter { $0.startDate <= date.addingTimeInterval(15 * 60) && $0.endDate >= date }
-            .sorted { abs($0.startDate.timeIntervalSince(date)) < abs($1.startDate.timeIntervalSince(date)) }
-        guard let event = candidates.first else { return [] }
-
-        var names: [String] = []
-        for attendee in event.attendees ?? [] where !attendee.isCurrentUser {
-            let name = attendee.name?.trimmingCharacters(in: .whitespaces)
-            let email = attendee.url.absoluteString.replacingOccurrences(of: "mailto:", with: "")
-            let label = (name?.isEmpty == false ? name : nil) ?? (email.isEmpty ? nil : email)
-            if let label, !names.contains(label) { names.append(label) }
+        let events = store.events(matching: window).map { event in
+            CalendarEvent(
+                title: event.title,
+                start: event.startDate,
+                end: event.endDate,
+                isAllDay: event.isAllDay,
+                attendees: (event.attendees ?? []).map { attendee in
+                    CalendarEvent.Attendee(
+                        name: attendee.name,
+                        email: attendee.url.absoluteString.replacingOccurrences(of: "mailto:", with: ""),
+                        isSelf: attendee.isCurrentUser,
+                        isResource: attendee.participantType == .room || attendee.participantType == .resource,
+                        declined: attendee.participantStatus == .declined
+                    )
+                }
+            )
         }
-        return names
+        return CalendarMatching.best(events, at: date)
     }
 }

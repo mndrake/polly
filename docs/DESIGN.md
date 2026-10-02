@@ -189,6 +189,18 @@ correctly. For the remote side:
   mapping unconfirmed "Speaker N" labels to names; it's parsed, removed from
   the notes and stored as suggestions. User-confirmed names always win and are
   the only names fed back into later prompts.
+* **Voice memory** – each separated voice's mean embedding (256-d WeSpeaker,
+  from FluidAudio) is stored with the meeting. Naming or confirming a speaker
+  adds that embedding to the person's profile in `Voices.json` (samples keyed
+  by meeting + speaker, so corrections move rather than pollute; 20 most
+  recent kept). New meetings are matched one-to-one by cosine similarity to
+  each person's duration-weighted centroid, requiring ≥ 0.55, a 0.06 lead over
+  the runner-up and ≥ 6 s of speech. Only user-named voices are learned, never
+  Claude's guesses. Precedence: user name > voice match > Claude suggestion.
+* **Calendars** – Google Calendar via OAuth for desktop apps (loopback
+  redirect + PKCE, read-only events scope, user-supplied OAuth client, tokens
+  in Keychain), then macOS Calendar via EventKit. The event in progress (or
+  starting within 15 min) supplies the title and invitees.
 * **Rejected** – reading the active-speaker highlight from Zoom/Teams through
   Accessibility APIs (fragile, per-app, extra permission), and platform
   transcript APIs (admin-licensed, three integrations).
@@ -197,8 +209,8 @@ correctly. For the remote side:
 
 * Core Audio process taps instead of ScreenCaptureKit (drops the
   Screen Recording requirement on macOS 14.4+).
-* Remember voices across meetings (opt-in voice fingerprints) so regular
-  colleagues are recognised automatically.
+* Calibrate the voice-match threshold on real meetings; offer "this is X"
+  corrections from the transcript directly.
 * Live (streaming) speaker separation for the captions window.
 * WhisperKit engine; per-meeting language auto-detect.
 * Calendar integration (EventKit) for titles/attendees.

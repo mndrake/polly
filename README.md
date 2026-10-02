@@ -20,6 +20,11 @@ meeting notes with Claude. Works with **Zoom**, **Microsoft Teams**,
   separated on your Mac (Speaker 1, Speaker 2, …). Claude suggests who each one
   is from the conversation and the calendar invite, and you can confirm or
   rename them with one click. Notes and action items then name real people.
+- 🧠 **Remembers voices** – once you've named someone, Polly recognizes their
+  voice in later meetings (a fingerprint stored on your Mac, not a recording).
+- 📅 **Google Calendar** – connect your Google account (or any calendar in macOS
+  Calendar) so meetings get their real title and invitee list. See
+  [docs/GOOGLE_CALENDAR.md](docs/GOOGLE_CALENDAR.md).
 - ✨ **Claude summaries** – title, summary, key points, decisions, action items
   with owners, open questions — streamed live. Then ask follow-up questions
   ("What did I commit to?", "Draft a follow-up email").
@@ -92,7 +97,7 @@ xcrun notarytool submit build/Polly.zip …   # after zipping with ditto
 | Your audio | AVAudioEngine microphone tap |
 | Speech-to-text | `SpeechAnalyzer`/`SpeechTranscriber` (macOS 26+), `SFSpeechRecognizer` on-device fallback |
 | Speaker separation | FluidAudio offline diarization (pyannote segmentation + WeSpeaker + VBx, Core ML, on device, macOS 15+) on the meeting-app channel after the call; voices are matched to transcript lines by time overlap |
-| Speaker names | Calendar invitees via EventKit + Claude's suggestions (a `speakers` JSON block it returns with the notes) + your edits |
+| Speaker names | Your edits > voices recognized from earlier meetings (WeSpeaker embeddings, cosine match) > Claude's suggestions (a `speakers` JSON block returned with the notes), with invitees from Google Calendar (OAuth, read-only) or macOS Calendar (EventKit) |
 | Transcript assembly | `TranscriptBuilder`: orders both channels, live partial lines, echo suppression |
 | Meeting detection | Running apps + window titles + "mic in use" → `MeetingDetector` rules |
 | Summaries & Q&A | Your Claude Code install in headless mode (`claude -p`, no tools, no project settings, nothing saved), or the Claude Messages API with an API key; `claude-opus-5-5` by default (Sonnet 5.5 / Haiku 4.5 selectable) |

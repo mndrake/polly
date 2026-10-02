@@ -84,7 +84,8 @@ public enum MeetingPrompts {
         customInstructions: String? = nil
     ) -> MessageRequest {
         var instructions = summaryInstructions
-        let unnamed = meeting.speakerIDs.filter { meeting.speakerNames[$0] == nil }
+        let trusted = meeting.trustedSpeakerNames
+        let unnamed = meeting.speakerIDs.filter { trusted[$0] == nil }
         if !unnamed.isEmpty {
             let labels = unnamed.map { "\"\(SpeakerLabels.defaultLabel(for: $0))\"" }.joined(separator: ", ")
             instructions += """

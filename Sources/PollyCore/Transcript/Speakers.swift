@@ -26,13 +26,13 @@ public struct SpeakerLabels: Sendable {
 
     /// Labels for display: the user's names, then Claude's suggestions.
     public static func display(for meeting: Meeting, myName: String?) -> SpeakerLabels {
-        SpeakerLabels(myName: myName, names: meeting.suggestedSpeakerNames.merging(meeting.speakerNames) { _, user in user })
+        SpeakerLabels(myName: myName, names: meeting.suggestedSpeakerNames.merging(meeting.trustedSpeakerNames) { _, trusted in trusted })
     }
 
-    /// Labels for prompts: only names the user confirmed, so Claude can
-    /// re-infer the rest instead of being anchored on its own earlier guesses.
+    /// Labels for prompts: names the user gave and voice matches, so Claude
+    /// re-infers the rest instead of being anchored on its own earlier guesses.
     public static func prompt(for meeting: Meeting, myName: String?) -> SpeakerLabels {
-        SpeakerLabels(myName: myName, names: meeting.speakerNames)
+        SpeakerLabels(myName: myName, names: meeting.trustedSpeakerNames)
     }
 
     public func label(for segment: TranscriptSegment) -> String {
@@ -67,8 +67,34 @@ public enum SpeakerAssignment {
         to segments: [TranscriptSegment],
         maxDistance: TimeInterval = 1.5
     ) -> [TranscriptSegment] {
+        assignment(turns, to: segments, maxDistance: maxDistance).segments
+    }
+
+    public struct Result: Sendable, Equatable {
+        public var segments: [TranscriptSegment]
+        /// Diarizer label → "S<n>".
+        public var speakerIDs: [String: String]
+        /// "S<n>" → seconds of speech attributed to that voice by the diarizer.
+        public var seconds: [String: Double]
+
+        /// Per-voice fingerprints from diarizer embeddings keyed by diarizer label.
+        public func voices(from embeddings: [String: [Float]]) -> [String: SpeakerVoice] {
+            var voices: [String: SpeakerVoice] = [:]
+            for (raw, id) in speakerIDs {
+                guard let embedding = embeddings[raw], !embedding.isEmpty else { continue }
+                voices[id] = SpeakerVoice(embedding: embedding, seconds: seconds[id] ?? 0)
+            }
+            return voices
+        }
+    }
+
+    public static func assignment(
+        _ turns: [DiarizedTurn],
+        to segments: [TranscriptSegment],
+        maxDistance: TimeInterval = 1.5
+    ) -> Result {
         let sortedTurns = turns.filter { $0.end > $0.start }.sorted { $0.start < $1.start }
-        guard !sortedTurns.isEmpty else { return segments }
+        guard !sortedTurns.isEmpty else { return Result(segments: segments, speakerIDs: [:], seconds: [:]) }
 
         // Raw diarizer label → "S<n>" by first appearance among turns that
         // actually cover transcribed speech (ignore voices that never spoke text).
@@ -85,12 +111,17 @@ public enum SpeakerAssignment {
             }
         }
 
-        return segments.map { segment in
+        let assigned = segments.map { segment -> TranscriptSegment in
             guard segment.speaker == .others else { return segment }
             var copy = segment
             copy.speakerID = bestRaw[segment.id].flatMap { renumber[$0] }
             return copy
         }
+        var seconds: [String: Double] = [:]
+        for turn in sortedTurns {
+            if let id = renumber[turn.speakerID] { seconds[id, default: 0] += turn.end - turn.start }
+        }
+        return Result(segments: assigned, speakerIDs: renumber, seconds: seconds)
     }
 
     static func bestVoice(for segment: TranscriptSegment, in turns: [DiarizedTurn], maxDistance: TimeInterval) -> String? {

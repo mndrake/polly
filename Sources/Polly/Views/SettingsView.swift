@@ -2,6 +2,8 @@ import PollyCore
 import SwiftUI
 
 struct SettingsView: View {
+    @EnvironmentObject private var model: AppModel
+
     var body: some View {
         TabView {
             ClaudeSettings()
@@ -10,6 +12,10 @@ struct SettingsView: View {
                 .tabItem { Label("Transcription", systemImage: "waveform") }
             DetectionSettings()
                 .tabItem { Label("Meetings", systemImage: "video") }
+            CalendarSettings(google: model.google)
+                .tabItem { Label("Calendar", systemImage: "calendar") }
+            VoiceSettings()
+                .tabItem { Label("Voices", systemImage: "person.wave.2") }
         }
         .frame(width: 560)
         .padding(20)
@@ -119,6 +125,7 @@ private struct TranscriptionSettings: View {
     @AppStorage(SettingsKey.showCaptionPanel) private var showCaptionPanel = true
     @AppStorage(SettingsKey.separateSpeakers) private var separateSpeakers = true
     @AppStorage(SettingsKey.useCalendarAttendees) private var useCalendarAttendees = true
+    @AppStorage(SettingsKey.rememberVoices) private var rememberVoices = true
     @EnvironmentObject private var model: AppModel
 
     private let locales = AppSettings.transcriptionLocales
@@ -155,6 +162,8 @@ private struct TranscriptionSettings: View {
                 Toggle("Tell other participants' voices apart", isOn: $separateSpeakers)
                     .disabled(!SpeakerDiarization.isSupported)
                 Toggle("Use calendar invitees to name speakers", isOn: $useCalendarAttendees)
+                Toggle("Remember voices across meetings", isOn: $rememberVoices)
+                    .disabled(!SpeakerDiarization.isSupported)
             } header: {
                 Text("Speakers")
             } footer: {
@@ -208,5 +217,158 @@ private struct DetectionSettings: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// People Polly recognizes by voice.
+private struct VoiceSettings: View {
+    @EnvironmentObject private var model: AppModel
+    @AppStorage(SettingsKey.rememberVoices) private var rememberVoices = true
+    @State private var confirmForgetAll = false
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Remember voices across meetings", isOn: $rememberVoices)
+                    .disabled(!SpeakerDiarization.isSupported)
+            } footer: {
+                Text("When you name or confirm a speaker, Polly saves a voice fingerprint (a list of numbers, not a recording) on this Mac and uses it to recognize that person in later meetings. Only voices you named are learned. Deleting a meeting removes what was learned from it. Recording laws in some places require consent before storing someone's voice characteristics; tell participants.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("Known voices") {
+                if model.voiceLibrary.profiles.isEmpty {
+                    Text("No voices yet. Name a speaker in a meeting to start.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(model.voiceLibrary.profiles.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }) { profile in
+                        VoiceRow(profile: profile)
+                    }
+                }
+            }
+
+            if !model.voiceLibrary.profiles.isEmpty {
+                Section {
+                    Button("Forget All Voices…", role: .destructive) { confirmForgetAll = true }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .confirmationDialog("Forget all voices?", isPresented: $confirmForgetAll) {
+            Button("Forget All", role: .destructive) { model.forgetAllVoices() }
+        } message: {
+            Text("Polly will stop recognizing everyone until you name them again. Meetings and their transcripts are kept.")
+        }
+    }
+}
+
+private struct VoiceRow: View {
+    @EnvironmentObject private var model: AppModel
+    let profile: VoiceProfile
+    @State private var name = ""
+
+    var body: some View {
+        HStack {
+            Image(systemName: "person.wave.2").foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                TextField("Name", text: $name)
+                    .textFieldStyle(.plain)
+                    .onSubmit { model.renameVoice(profile.id, to: name) }
+                Text(detail).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button(role: .destructive) {
+                model.removeVoice(profile.id)
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .help("Forget \(profile.name)'s voice")
+        }
+        .onAppear { name = profile.name }
+        .onChange(of: profile.name) { _, newValue in name = newValue }
+    }
+
+    private var detail: String {
+        let meetings = profile.meetingCount == 1 ? "1 meeting" : "\(profile.meetingCount) meetings"
+        guard let last = profile.lastHeard else { return meetings }
+        return "Learned from \(meetings) · last \(last.formatted(date: .abbreviated, time: .omitted))"
+    }
+}
+
+/// Google Calendar connection, plus a note on macOS Calendar accounts.
+private struct CalendarSettings: View {
+    @ObservedObject var google: GoogleCalendarService
+    @AppStorage(SettingsKey.useCalendarAttendees) private var useCalendar = true
+    @State private var clientID = ""
+    @State private var clientSecret = ""
+    @State private var showClientFields = false
+
+    private static let guideURL = URL(string: "https://github.com/mndrake/polly/blob/main/docs/GOOGLE_CALENDAR.md")!
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Look up the meeting in my calendar", isOn: $useCalendar)
+            } footer: {
+                Text("When recording starts, Polly finds the event happening now and uses its title and invitees, so Claude can put names to voices. Only invitee names are included when the transcript is sent to Claude.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("Google Calendar") {
+                if let email = google.connectedEmail {
+                    HStack {
+                        Label("Connected: \(email)", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                        Spacer()
+                        Button("Disconnect") { google.disconnect() }
+                    }
+                } else if google.isConnecting {
+                    HStack {
+                        ProgressView().controlSize(.small)
+                        Text("Finish signing in in your browser…")
+                        Spacer()
+                        Button("Cancel") { google.cancelConnect() }
+                    }
+                } else {
+                    HStack {
+                        Button("Connect Google Calendar…") {
+                            Task { await google.connect() }
+                        }
+                        .disabled(!google.client.isConfigured)
+                        Spacer()
+                        Link("Setup guide", destination: Self.guideURL).font(.caption)
+                    }
+                }
+                if let error = google.lastError {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .font(.caption)
+                }
+
+                DisclosureGroup("OAuth client", isExpanded: $showClientFields) {
+                    TextField("Client ID", text: $clientID, prompt: Text("1234-abc.apps.googleusercontent.com"))
+                    SecureField("Client secret", text: $clientSecret, prompt: Text("GOCSPX-…"))
+                    HStack {
+                        Button("Save") { google.saveClient(id: clientID, secret: clientSecret) }
+                            .disabled(clientID.trimmingCharacters(in: .whitespaces).isEmpty || clientSecret.isEmpty)
+                        Spacer()
+                        Link("How to create one", destination: Self.guideURL).font(.caption)
+                    }
+                    Text("Google requires each app to have its own OAuth client. Create a free \"Desktop app\" client in your Google Cloud project (an \"Internal\" app if you use Google Workspace) with the Google Calendar API enabled. Polly only asks for read-only access to events.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Other calendars") {
+                Text("Polly also reads macOS Calendar, which includes accounts added in System Settings → Internet Accounts (Google, Microsoft Exchange/Outlook, iCloud). If your organization allows it, adding your Google account there works without setting up an OAuth client.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear {
+            clientID = google.client.clientID
+            clientSecret = google.client.clientSecret
+            showClientFields = !google.client.isConfigured && !google.isConnected
+        }
     }
 }

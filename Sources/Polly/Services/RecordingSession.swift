@@ -248,8 +248,14 @@ final class RecordingSession: ObservableObject {
         othersRecorder = nil
     }
 
-    func setAttendees(_ names: [String]) {
-        meeting.attendees = names
+    /// Applies the matching calendar event: invitees, and its title unless
+    /// the meeting already has a better one.
+    func setCalendarEvent(_ event: CalendarEvent) {
+        meeting.attendees = event.participantNames
+        if meeting.hasDefaultTitle, let title = event.title?.trimmingCharacters(in: .whitespaces), !title.isEmpty {
+            meeting.title = title
+            meeting.hasDefaultTitle = false
+        }
     }
 
     func rename(_ title: String) {

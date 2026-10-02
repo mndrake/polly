@@ -26,6 +26,9 @@ enum SettingsKey {
     static let claudeCodePath = "claudeCodePath"
     static let separateSpeakers = "separateSpeakers"
     static let useCalendarAttendees = "useCalendarAttendees"
+    static let rememberVoices = "rememberVoices"
+    static let googleClientID = "googleClientID"
+    static let googleAccountEmail = "googleAccountEmail"
 }
 
 /// How Polly talks to Claude.
@@ -121,6 +124,9 @@ enum AppSettings {
             SettingsKey.claudeCodePath: "",
             SettingsKey.separateSpeakers: true,
             SettingsKey.useCalendarAttendees: true,
+            SettingsKey.rememberVoices: true,
+            SettingsKey.googleClientID: "",
+            SettingsKey.googleAccountEmail: "",
         ])
     }
 
@@ -163,6 +169,8 @@ enum AppSettings {
         defaults.bool(forKey: SettingsKey.separateSpeakers) && SpeakerDiarization.isSupported
     }
     static var useCalendarAttendees: Bool { defaults.bool(forKey: SettingsKey.useCalendarAttendees) }
+    /// Learn named voices and recognize them in later meetings.
+    static var rememberVoices: Bool { defaults.bool(forKey: SettingsKey.rememberVoices) }
 
     static var summaryProvider: SummaryProvider {
         SummaryProvider(rawValue: defaults.string(forKey: SettingsKey.summaryProvider) ?? "") ?? .claudeCode
@@ -193,6 +201,8 @@ enum AppSettings {
 enum KeychainStore {
     private static let service = "app.polly.Polly"
     private static let account = "anthropic-api-key"
+    static let googleClientSecretAccount = "google-client-secret"
+    static let googleRefreshTokenAccount = "google-refresh-token"
 
     static var apiKey: String? {
         if let stored = read(), !stored.isEmpty { return stored }
@@ -201,7 +211,12 @@ enum KeychainStore {
         return nil
     }
 
-    static func read() -> String? {
+    static func read() -> String? { read(account: account) }
+
+    @discardableResult
+    static func save(_ key: String) -> Bool { save(key, account: account) }
+
+    static func read(account: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -217,7 +232,7 @@ enum KeychainStore {
     }
 
     @discardableResult
-    static func save(_ key: String) -> Bool {
+    static func save(_ key: String, account: String) -> Bool {
         let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

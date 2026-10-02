@@ -64,6 +64,11 @@ public struct Meeting: Codable, Sendable, Identifiable, Equatable {
     public var suggestedSpeakerNames: [String: String]
     /// Invitees of the matching calendar event, if any.
     public var attendees: [String]
+    /// Voice fingerprint of each separated speaker, so naming them later can
+    /// teach the voice library.
+    public var speakerVoices: [String: SpeakerVoice]
+    /// Voices recognized as people from earlier meetings.
+    public var recognizedSpeakers: [String: VoiceMatch]
 
     public init(
         id: UUID = UUID(),
@@ -78,7 +83,9 @@ public struct Meeting: Codable, Sendable, Identifiable, Equatable {
         questions: [QAExchange] = [],
         speakerNames: [String: String] = [:],
         suggestedSpeakerNames: [String: String] = [:],
-        attendees: [String] = []
+        attendees: [String] = [],
+        speakerVoices: [String: SpeakerVoice] = [:],
+        recognizedSpeakers: [String: VoiceMatch] = [:]
     ) {
         self.id = id
         self.title = title ?? Meeting.defaultTitle(platform: platform, startedAt: startedAt)
@@ -94,6 +101,8 @@ public struct Meeting: Codable, Sendable, Identifiable, Equatable {
         self.speakerNames = speakerNames
         self.suggestedSpeakerNames = suggestedSpeakerNames
         self.attendees = attendees
+        self.speakerVoices = speakerVoices
+        self.recognizedSpeakers = recognizedSpeakers
     }
 
     // Meetings saved by earlier versions lack the newer fields.
@@ -113,6 +122,8 @@ public struct Meeting: Codable, Sendable, Identifiable, Equatable {
         speakerNames = try c.decodeIfPresent([String: String].self, forKey: .speakerNames) ?? [:]
         suggestedSpeakerNames = try c.decodeIfPresent([String: String].self, forKey: .suggestedSpeakerNames) ?? [:]
         attendees = try c.decodeIfPresent([String].self, forKey: .attendees) ?? []
+        speakerVoices = try c.decodeIfPresent([String: SpeakerVoice].self, forKey: .speakerVoices) ?? [:]
+        recognizedSpeakers = try c.decodeIfPresent([String: VoiceMatch].self, forKey: .recognizedSpeakers) ?? [:]
     }
 
     /// Separated remote voices in order of first appearance.
@@ -124,10 +135,16 @@ public struct Meeting: Codable, Sendable, Identifiable, Equatable {
         return seen
     }
 
-    /// The display name for a separated voice: the user's choice, then
-    /// Claude's suggestion, then "Speaker N".
+    /// The display name for a separated voice: the user's choice, then a
+    /// voice match from earlier meetings, then Claude's suggestion, then "Speaker N".
     public func displayName(forSpeakerID id: String) -> String {
-        speakerNames[id] ?? suggestedSpeakerNames[id] ?? SpeakerLabels.defaultLabel(for: id)
+        speakerNames[id] ?? recognizedSpeakers[id]?.name ?? suggestedSpeakerNames[id] ?? SpeakerLabels.defaultLabel(for: id)
+    }
+
+    /// Names that are reliable enough to give Claude as facts: the user's
+    /// own, plus voice matches.
+    public var trustedSpeakerNames: [String: String] {
+        recognizedSpeakers.mapValues(\.name).merging(speakerNames) { _, user in user }
     }
 
     public var duration: TimeInterval {

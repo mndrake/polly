@@ -126,17 +126,22 @@ private struct SpeakerChip: View {
     @State private var draft = ""
 
     private var confirmed: String? { meeting.speakerNames[speakerID] }
+    private var recognized: VoiceMatch? { meeting.recognizedSpeakers[speakerID] }
     private var suggested: String? { meeting.suggestedSpeakerNames[speakerID] }
 
     var body: some View {
         Button {
-            draft = confirmed ?? suggested ?? ""
+            draft = confirmed ?? recognized?.name ?? suggested ?? ""
             editing = true
         } label: {
             HStack(spacing: 4) {
                 Circle().fill(SpeakerColor.color(for: .others, speakerID: speakerID)).frame(width: 8, height: 8)
                 Text(meeting.displayName(forSpeakerID: speakerID))
-                if confirmed == nil, suggested != nil {
+                if confirmed == nil, let recognized {
+                    Image(systemName: "waveform.badge.checkmark")
+                        .foregroundStyle(.secondary)
+                        .help("Recognized by voice from earlier meetings (\(Int(recognized.similarity * 100))% match) — click to confirm or change")
+                } else if confirmed == nil, suggested != nil {
                     Text("?").foregroundStyle(.secondary).help("Suggested by Claude — click to confirm or change")
                 }
             }
@@ -159,8 +164,14 @@ private struct SpeakerChip: View {
                         save()
                     }
                 }
+                if AppSettings.rememberVoices, let voice = meeting.speakerVoices[speakerID] {
+                    Text(voice.seconds >= VoiceLibrary.minimumSeconds
+                         ? "Polly will remember this voice for future meetings."
+                         : "Too little speech from this voice to remember it.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 HStack {
-                    if confirmed != nil || suggested != nil {
+                    if confirmed != nil || recognized != nil || suggested != nil {
                         Button("Clear") {
                             draft = ""
                             save()
